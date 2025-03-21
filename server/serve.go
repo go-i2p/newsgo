@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"gitlab.com/golang-commonmark/markdown"
-	stats "i2pgit.org/idk/newsgo/server/stats"
+	stats "github.com/go-i2p/newsgo/server/stats"
 )
 
 type NewsServer struct {

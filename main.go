@@ -17,11 +17,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eyedeekay/onramp"
+	"github.com/go-i2p/onramp"
 	"github.com/google/uuid"
-	builder "i2pgit.org/idk/newsgo/builder"
-	server "i2pgit.org/idk/newsgo/server"
-	signer "i2pgit.org/idk/newsgo/signer"
+	builder "github.com/go-i2p/newsgo/builder"
+	server "github.com/go-i2p/newsgo/server"
+	signer "github.com/go-i2p/newsgo/signer"
 )
 
 func loadPrivateKey(path string) (*rsa.PrivateKey, error) {

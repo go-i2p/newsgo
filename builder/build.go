@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/yosssi/gohtml"
-	newsfeed "i2pgit.org/idk/newsgo/builder/feed"
+	newsfeed "github.com/go-i2p/newsgo/builder/feed"
 )
 
 type NewsBuilder struct {
