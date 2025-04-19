@@ -6,9 +6,9 @@ import (
 	"io/ioutil"
 	"time"
 
+	newsfeed "github.com/go-i2p/newsgo/builder/feed"
 	"github.com/google/uuid"
 	"github.com/yosssi/gohtml"
-	newsfeed "github.com/go-i2p/newsgo/builder/feed"
 )
 
 type NewsBuilder struct {
@@ -101,7 +101,7 @@ func (nb *NewsBuilder) Build() (string, error) {
 	return gohtml.Format(str), nil
 }
 
-func Builder(newsFile, releasesJson, blocklistXML string) *NewsBuilder {
+func Builder(newsFile string, releasesJson string, blocklistXML string) *NewsBuilder {
 	nb := &NewsBuilder{
 		Feed: newsfeed.Feed{
 			EntriesHTMLPath: newsFile,
