@@ -4,7 +4,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -59,7 +58,7 @@ func init() {
 }
 
 func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
-	privPem, err := ioutil.ReadFile(path)
+	privPem, err := os.ReadFile(path)
 	if nil != err {
 		return nil, err
 	}

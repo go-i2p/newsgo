@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -23,13 +20,6 @@ var buildCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		// For some reason this is the only way passing booleans from cobra to viper works
 		viper.GetViper().Set("i2p", i2p)
-
-		viper.WriteConfigTo(os.Stdout)
-		viper.Unmarshal(c)
-		data, _ := json.MarshalIndent(&c, "  ", "")
-		fmt.Print(string(data[:]))
-
-		os.Exit(0)
 
 		f, e := os.Stat(c.NewsFile)
 		if e != nil {
@@ -113,7 +103,7 @@ func build(newsFile string) {
 		if err := os.MkdirAll(filepath.Join(c.BuildDir, filepath.Dir(filename)), 0755); err != nil {
 			panic(err)
 		}
-		if err = ioutil.WriteFile(filepath.Join(c.BuildDir, filename), []byte(feed), 0644); err != nil {
+		if err = os.WriteFile(filepath.Join(c.BuildDir, filename), []byte(feed), 0644); err != nil {
 			panic(err)
 		}
 	}
