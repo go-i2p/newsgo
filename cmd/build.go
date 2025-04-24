@@ -18,8 +18,6 @@ var buildCmd = &cobra.Command{
 	Use:   "build",
 	Short: "Build newsfeeds from XML",
 	Run: func(cmd *cobra.Command, args []string) {
-		// For some reason this is the only way passing booleans from cobra to viper works
-		viper.GetViper().Set("i2p", i2p)
 
 		f, e := os.Stat(c.NewsFile)
 		if e != nil {
@@ -59,17 +57,17 @@ func init() {
 	buildCmd.Flags().String("feedbackup", "http://dn3tvalnjz432qkqsvpfdqrwpqkw3ye4n4i2uyfr4jexvo3sp5ka.b32.i2p/news/news.atom.xml", "Backup newsfeed for updates to pass to news generator")
 	buildCmd.Flags().String("feeduid", "", "UUID to use for the RSS feed to pass to news generator. Random if omitted")
 	buildCmd.Flags().String("builddir", "build", "Build directory to output feeds to")
-	buildCmd.Flags().BoolVar(&i2p, "i2p", false, "Enable I2P support")
+	serveCmd.Flags().String("samaddr", onramp.SAM_ADDR, "SAMv3 gateway address. Empty string to disable")
 
 	viper.BindPFlags(buildCmd.Flags())
 
 }
 
 func defaultFeedURL() string {
-	if !c.I2P {
+	if c.SamAddr == "" {
 		return "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml"
 	}
-	garlic := &onramp.Garlic{}
+	garlic, _ := onramp.NewGarlic("newsgo", c.SamAddr, onramp.OPT_DEFAULTS)
 	defer garlic.Close()
 	ln, err := garlic.Listen()
 	if err != nil {

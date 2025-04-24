@@ -11,7 +11,6 @@ import (
 )
 
 var cfgFile string
-var i2p bool
 var c *config.Conf = &config.Conf{}
 
 // rootCmd represents the base command when called without any subcommands

@@ -68,7 +68,7 @@ func init() {
 }
 
 func serveI2P(s *server.NewsServer) error {
-	garlic, err := onramp.NewGarlic("newsgo", c.SamAddr, make([]string, 0))
+	garlic, err := onramp.NewGarlic("newsgo", c.SamAddr, onramp.OPT_DEFAULTS)
 	if err != nil {
 		return err
 	}

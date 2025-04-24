@@ -3,7 +3,6 @@ package config
 type Conf struct {
 	NewsDir         string
 	StatsFile       string
-	I2P             bool
 	Http            string
 	SamAddr         string
 	NewsFile        string
