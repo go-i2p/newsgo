@@ -194,9 +194,16 @@ func Build(newsFile string) {
 	news.BACKUPFEED = *backupurl
 	news.SUBTITLE = *subtitle
 	news.URNID = *urn
+	// BaseEntriesHTMLPath should only be set when *newsfile is a directory.
+	// When *newsfile is a single .html file, filepath.Join(*newsfile,
+	// "entries.html") produces a path like "data/entries.html/entries.html"
+	// which uses the file as a directory component — it never exists and
+	// causes LoadHTML to return an error.
 	base := filepath.Join(*newsfile, "entries.html")
 	if newsFile != base {
-		news.Feed.BaseEntriesHTMLPath = base
+		if stat, serr := os.Stat(*newsfile); serr == nil && stat.IsDir() {
+			news.Feed.BaseEntriesHTMLPath = base
+		}
 	}
 	if feed, err := news.Build(); err != nil {
 		log.Printf("Build error: %s", err)

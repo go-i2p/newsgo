@@ -4,9 +4,11 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	signer "github.com/go-i2p/newsgo/signer"
 	"github.com/spf13/cobra"
@@ -20,18 +22,22 @@ var signCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		viper.Unmarshal(c)
 
-		f, e := os.Stat(c.NewsFile)
+		// Sign walks the build output directory for .atom.xml feeds produced
+		// by the build command.  Walking the source directory for .html files
+		// would call CreateSu3 on them; because CreateSu3 derives the output
+		// path by replacing ".atom.xml" with ".su3", a .html input path is
+		// unchanged and the source file is overwritten with binary su3 data.
+		f, e := os.Stat(c.BuildDir)
 		if e != nil {
 			panic(e)
 		}
 		if f.IsDir() {
-			err := filepath.Walk(c.NewsFile,
+			err := filepath.Walk(c.BuildDir,
 				func(path string, info os.FileInfo, err error) error {
 					if err != nil {
 						return err
 					}
-					ext := filepath.Ext(path)
-					if ext == ".html" {
+					if strings.HasSuffix(path, ".atom.xml") {
 						Sign(path)
 					}
 					return nil
@@ -40,7 +46,7 @@ var signCmd = &cobra.Command{
 				log.Println(err)
 			}
 		} else {
-			Sign(c.NewsFile)
+			Sign(c.BuildDir)
 		}
 
 	},
@@ -53,6 +59,9 @@ func init() {
 
 	signCmd.Flags().String("signerid", "null@example.i2p", "ID to use when signing the news")
 	signCmd.Flags().String("signingkey", "signing_key.pem", "Path to a signing key")
+	// builddir must match the flag registered by buildCmd so that the sign
+	// command operates on the same output directory where feeds were written.
+	signCmd.Flags().String("builddir", "build", "Build directory containing .atom.xml feeds to sign")
 
 	viper.BindPFlags(signCmd.Flags())
 }
@@ -63,7 +72,13 @@ func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
 		return nil, err
 	}
 
+	// pem.Decode returns (nil, rest) when the input contains no PEM block
+	// (e.g. empty file, DER-encoded key, wrong file).  Accessing privDer.Bytes
+	// without this nil check causes a runtime panic.
 	privDer, _ := pem.Decode(privPem)
+	if privDer == nil {
+		return nil, fmt.Errorf("loadPrivateKey: no PEM block found in %s", path)
+	}
 	privKey, err := x509.ParsePKCS1PrivateKey(privDer.Bytes)
 	if nil != err {
 		return nil, err

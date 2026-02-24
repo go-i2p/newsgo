@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -99,4 +100,70 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	if n2.DownloadLangs["fr"] != 1 {
 		t.Errorf("expected fr=1, got %d", n2.DownloadLangs["fr"])
 	}
+}
+
+// TestIncrement_ConcurrentSafety verifies that Increment is safe to call from
+// multiple goroutines simultaneously. Before the mutex was added, concurrent
+// calls produced a "fatal error: concurrent map writes" runtime panic. Running
+// this test with -race will detect any remaining data-race.
+func TestIncrement_ConcurrentSafety(t *testing.T) {
+	n := &NewsStats{DownloadLangs: make(map[string]int)}
+
+	const goroutines = 50
+	const callsEach = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			rq := httptest.NewRequest(http.MethodGet, "/?lang=en_US", nil)
+			for j := 0; j < callsEach; j++ {
+				n.Increment(rq)
+			}
+		}()
+	}
+	wg.Wait()
+
+	want := goroutines * callsEach
+	n.mu.RLock()
+	got := n.DownloadLangs["en_US"]
+	n.mu.RUnlock()
+	if got != want {
+		t.Errorf("concurrent increments: got %d, want %d", got, want)
+	}
+}
+
+// TestSave_ConcurrentWithIncrement verifies that Save can be called while
+// Increment goroutines are running without a data race.
+func TestSave_ConcurrentWithIncrement(t *testing.T) {
+	dir := t.TempDir()
+	sf := filepath.Join(dir, "stats.json")
+	n := &NewsStats{
+		StateFile:     sf,
+		DownloadLangs: make(map[string]int),
+	}
+
+	var wg sync.WaitGroup
+	// 20 concurrent incrementers
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rq := httptest.NewRequest(http.MethodGet, "/?lang=de", nil)
+			for j := 0; j < 50; j++ {
+				n.Increment(rq)
+			}
+		}()
+	}
+	// 5 concurrent savers
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Errors are expected when the file hasn't been written yet; we
+			// only care that Save does not panic or race.
+			_ = n.Save()
+		}()
+	}
+	wg.Wait()
 }

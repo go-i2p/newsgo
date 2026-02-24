@@ -18,6 +18,10 @@ var buildCmd = &cobra.Command{
 	Use:   "build",
 	Short: "Build newsfeeds from XML",
 	Run: func(cmd *cobra.Command, args []string) {
+		// Populate the shared config struct from cobra flags and any config
+		// file. Without this call every field of c is the zero value (empty
+		// string), causing the very first os.Stat(c.NewsFile) to panic.
+		viper.Unmarshal(c)
 
 		f, e := os.Stat(c.NewsFile)
 		if e != nil {
@@ -48,16 +52,22 @@ var buildCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(buildCmd)
 	buildCmd.Flags().String("newsfile", "data", "entries to pass to news generator. If passed a directory, all 'entries.html' files in the directory will be processed")
-	buildCmd.Flags().String("blocklist", "data/blocklist.xml", "block list file to pass to news generator")
+	// Flag name matches README: --blockfile (was incorrectly "blocklist").
+	// config.Conf.BlockList carries the mapstructure:"blockfile" tag so that
+	// viper.Unmarshal maps the flag value to the right field.
+	buildCmd.Flags().String("blockfile", "data/blocklist.xml", "block list file to pass to news generator")
 	buildCmd.Flags().String("releasejson", "data/releases.json", "json file describing an update to pass to news generator")
 	buildCmd.Flags().String("feedtitle", "I2P News", "title to use for the RSS feed to pass to news generator")
 	buildCmd.Flags().String("feedsubtitle", "News feed, and router updates", "subtitle to use for the RSS feed to pass to news generator")
 	buildCmd.Flags().String("feedsite", "http://i2p-projekt.i2p", "site for the RSS feed to pass to news generator")
 	buildCmd.Flags().String("feedmain", defaultFeedURL(), "Primary newsfeed for updates to pass to news generator")
 	buildCmd.Flags().String("feedbackup", "http://dn3tvalnjz432qkqsvpfdqrwpqkw3ye4n4i2uyfr4jexvo3sp5ka.b32.i2p/news/news.atom.xml", "Backup newsfeed for updates to pass to news generator")
-	buildCmd.Flags().String("feeduid", "", "UUID to use for the RSS feed to pass to news generator. Random if omitted")
+	// Flag name matches README: --feeduri (was incorrectly "feeduid").
+	// config.Conf.FeedUuid carries the mapstructure:"feeduri" tag.
+	buildCmd.Flags().String("feeduri", "", "UUID to use for the RSS feed to pass to news generator. Random if omitted")
 	buildCmd.Flags().String("builddir", "build", "Build directory to output feeds to")
-	serveCmd.Flags().String("samaddr", onramp.SAM_ADDR, "SAMv3 gateway address. Empty string to disable")
+	// Note: samaddr is registered on serveCmd inside cmd/serve.go; do NOT
+	// re-register it here — pflag panics on duplicate flag definitions.
 
 	viper.BindPFlags(buildCmd.Flags())
 
@@ -84,20 +94,31 @@ func build(newsFile string) {
 	news.MAINFEED = c.FeedMain
 	news.BACKUPFEED = c.FeedBackup
 	news.SUBTITLE = c.FeedSubtitle
-	if c.FeedUuid == "" {
+	// Use the user-supplied UUID when provided; generate a random one only
+	// when none was given (the previous code had this condition inverted).
+	if c.FeedUuid != "" {
 		news.URNID = c.FeedUuid
 	} else {
 		news.URNID = uuid.NewString()
 	}
 
-	base := filepath.Join(newsFile, "entries.html")
+	// BaseEntriesHTMLPath must point to the root entries.html in the top-
+	// level source directory (c.NewsFile), not to a sub-path derived from
+	// the individual file being processed.  Using newsFile here produced a
+	// path like "data/translations/de/entries.html/entries.html" which is
+	// always invalid.
+	base := filepath.Join(c.NewsFile, "entries.html")
 	if newsFile != base {
 		news.Feed.BaseEntriesHTMLPath = base
 	}
 	if feed, err := news.Build(); err != nil {
 		log.Printf("Build error: %s", err)
 	} else {
-		filename := strings.Replace(strings.Replace(strings.Replace(strings.Replace(c.NewsFile, ".html", ".atom.xml", -1), "entries.", "news_", -1), "translations", "", -1), "news_atom", "news.atom", -1)
+		// Output filename is derived from the individual file being processed
+		// (newsFile), not from the root directory flag (c.NewsFile).  Using
+		// c.NewsFile caused every file in the walk to map to the same output
+		// path, silently overwriting all but the last feed.
+		filename := strings.Replace(strings.Replace(strings.Replace(strings.Replace(newsFile, ".html", ".atom.xml", -1), "entries.", "news_", -1), "translations", "", -1), "news_atom", "news.atom", -1)
 		if err := os.MkdirAll(filepath.Join(c.BuildDir, filepath.Dir(filename)), 0755); err != nil {
 			panic(err)
 		}
