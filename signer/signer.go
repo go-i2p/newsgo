@@ -32,5 +32,5 @@ func (ns *NewsSigner) CreateSu3(xmldata string) error {
 		return err
 	}
 	outfile := strings.Replace(xmldata, ".atom.xml", ".su3", -1)
-	return ioutil.WriteFile(outfile, bytes, 0644)
+	return ioutil.WriteFile(outfile, bytes, 0o644)
 }

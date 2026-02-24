@@ -17,11 +17,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-i2p/onramp"
-	"github.com/google/uuid"
 	builder "github.com/go-i2p/newsgo/builder"
 	server "github.com/go-i2p/newsgo/server"
 	signer "github.com/go-i2p/newsgo/signer"
+	"github.com/go-i2p/onramp"
+	"github.com/google/uuid"
 )
 
 func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
@@ -59,7 +59,7 @@ var (
 	port      = flag.String("port", "9696", "port to serve on")
 	i2p       = flag.Bool("i2p", isSamAround(), "automatically co-host on an I2P service using SAMv3")
 	tcp       = flag.Bool("http", true, "host on an HTTP service at host:port")
-	//newsfile    = flag.String("newsfile", "data/entries.html", "entries to pass to news generator. If passed a directory, all `entries.html` files in the directory will be processed")
+	// newsfile    = flag.String("newsfile", "data/entries.html", "entries to pass to news generator. If passed a directory, all `entries.html` files in the directory will be processed")
 	newsfile    = flag.String("newsfile", "data", "entries to pass to news generator. If passed a directory, all `entries.html` files in the directory will be processed")
 	bloclist    = flag.String("blocklist", "data/blocklist.xml", "block list file to pass to news generator")
 	releasejson = flag.String("releasejson", "data/releases.json", "json file describing an update to pass to news generator")
@@ -202,10 +202,10 @@ func Build(newsFile string) {
 		log.Printf("Build error: %s", err)
 	} else {
 		filename := strings.Replace(strings.Replace(strings.Replace(strings.Replace(newsFile, ".html", ".atom.xml", -1), "entries.", "news_", -1), "translations", "", -1), "news_atom", "news.atom", -1)
-		if err := os.MkdirAll(filepath.Join(*builddir, filepath.Dir(filename)), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(*builddir, filepath.Dir(filename)), 0o755); err != nil {
 			panic(err)
 		}
-		if err = ioutil.WriteFile(filepath.Join(*builddir, filename), []byte(feed), 0644); err != nil {
+		if err = ioutil.WriteFile(filepath.Join(*builddir, filename), []byte(feed), 0o644); err != nil {
 			panic(err)
 		}
 	}

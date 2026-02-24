@@ -6,9 +6,9 @@ import (
 	"io/ioutil"
 	"time"
 
+	newsfeed "github.com/go-i2p/newsgo/builder/feed"
 	"github.com/google/uuid"
 	"github.com/yosssi/gohtml"
-	newsfeed "github.com/go-i2p/newsgo/builder/feed"
 )
 
 type NewsBuilder struct {
@@ -93,7 +93,7 @@ func (nb *NewsBuilder) Build() (string, error) {
 		return "", err
 	}
 	str += jsonxml
-	for index, _ := range nb.Feed.ArticlesSet {
+	for index := range nb.Feed.ArticlesSet {
 		art := nb.Feed.Article(index)
 		str += art.Entry()
 	}

@@ -18,7 +18,7 @@ type Feed struct {
 func (f *Feed) LoadHTML() error {
 	data, err := ioutil.ReadFile(f.EntriesHTMLPath)
 	if err != nil {
-		return fmt.Errorf("LoadHTML: error", err)
+		return fmt.Errorf("LoadHTML: %w", err)
 	}
 	f.doc = soup.HTMLParse(string(data))
 	f.HeaderTitle = f.doc.Find("header").FullText()
@@ -29,7 +29,7 @@ func (f *Feed) LoadHTML() error {
 	if f.BaseEntriesHTMLPath != "" {
 		data, err := ioutil.ReadFile(f.BaseEntriesHTMLPath)
 		if err != nil {
-			return fmt.Errorf("LoadHTML: error", err)
+			return fmt.Errorf("LoadHTML: %w", err)
 		}
 		f.doc = soup.HTMLParse(string(data))
 		f.HeaderTitle = f.doc.Find("header").FullText()
@@ -73,10 +73,16 @@ type Article struct {
 	content string
 }
 
+// Content returns the HTML body of the article, skipping the first 5 soup
+// nodes which correspond to the wrapping <article> and <details>/<summary>
+// elements. Guards against short or minimal articles that produce fewer nodes.
 func (a *Article) Content() string {
 	str := ""
 	doc := soup.HTMLParse(string(a.content))
 	articleBody := doc.FindAll("")
+	if len(articleBody) <= 5 {
+		return str
+	}
 	for _, v := range articleBody[5:] {
 		str += v.HTML()
 	}

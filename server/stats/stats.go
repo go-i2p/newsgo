@@ -61,18 +61,31 @@ func (n *NewsStats) Save() error {
 	if err != nil {
 		return err
 	}
-	if err := ioutil.WriteFile(n.StateFile, bytes, 0644); err != nil {
+	if err := ioutil.WriteFile(n.StateFile, bytes, 0o644); err != nil {
 		return err
 	}
 	return nil
 }
 
+// Load reads persisted download stats from StateFile. It is safe under all
+// failure modes: missing file, malformed JSON, and a file containing the JSON
+// value "null" (which would otherwise unmarshal successfully into a nil map,
+// causing a panic on the next Increment call).
 func (n *NewsStats) Load() {
 	bytes, err := ioutil.ReadFile(n.StateFile)
 	if err != nil {
+		// File missing or unreadable — start with an empty map.
 		n.DownloadLangs = make(map[string]int)
+		return
 	}
 	if err := json.Unmarshal(bytes, &n.DownloadLangs); err != nil {
+		// Malformed JSON — start with an empty map.
+		n.DownloadLangs = make(map[string]int)
+		return
+	}
+	// A stats file containing the JSON value "null" unmarshals successfully
+	// but sets DownloadLangs to nil, which panics on the next map write.
+	if n.DownloadLangs == nil {
 		n.DownloadLangs = make(map[string]int)
 	}
 }

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitlab.com/golang-commonmark/markdown"
 	stats "github.com/go-i2p/newsgo/server/stats"
+	"gitlab.com/golang-commonmark/markdown"
 )
 
 type NewsServer struct {
@@ -67,11 +67,13 @@ func fileType(file string) (string, error) {
 	}
 }
 
-func openDirectory(wd string) string {
-	//wd = strings.Replace(wd, leader, "", 1)
+// openDirectory returns a Markdown directory listing for wd. It returns an
+// error rather than calling log.Fatal so that callers inside HTTP handlers
+// can surface a proper HTTP error response instead of killing the process.
+func openDirectory(wd string) (string, error) {
 	files, err := ioutil.ReadDir(wd)
 	if err != nil {
-		log.Fatal(err)
+		return "", fmt.Errorf("openDirectory: %w", err)
 	}
 	var readme string
 	log.Println("Navigating directory:", wd)
@@ -98,7 +100,7 @@ func openDirectory(wd string) string {
 			readme += fmt.Sprintf(" - [%s](%s/) : `%d` : `%s`\n", file.Name(), file.Name(), file.Size(), file.Mode())
 		}
 	}
-	return readme
+	return readme, nil
 }
 
 func hTML(mdtxt string) []byte {
@@ -128,10 +130,19 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 		n.Stats.Graph(rw)
 		return nil
 	}
-	f, _ := os.Stat(file)
+	// Check whether the path is a directory. The os.Stat error must not be
+	// discarded: if the file was removed between fileCheck and ServeFile,
+	// f would be nil and f.IsDir() would panic.
+	f, err := os.Stat(file)
+	if err != nil {
+		return fmt.Errorf("ServeFile: stat %s: %w", file, err)
+	}
 	if f.IsDir() {
-		bytes := hTML(openDirectory(file))
-		rw.Write(bytes)
+		content, err := openDirectory(file)
+		if err != nil {
+			return fmt.Errorf("ServeFile: %w", err)
+		}
+		rw.Write(hTML(content))
 		return nil
 	}
 	bytes, err := ioutil.ReadFile(file)
