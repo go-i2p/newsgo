@@ -18,7 +18,7 @@ type Feed struct {
 func (f *Feed) LoadHTML() error {
 	data, err := ioutil.ReadFile(f.EntriesHTMLPath)
 	if err != nil {
-		return fmt.Errorf("LoadHTML: %w", err)
+		return fmt.Errorf("loadHTML: error %s", err)
 	}
 	f.doc = soup.HTMLParse(string(data))
 	f.HeaderTitle = f.doc.Find("header").FullText()
@@ -29,7 +29,7 @@ func (f *Feed) LoadHTML() error {
 	if f.BaseEntriesHTMLPath != "" {
 		data, err := ioutil.ReadFile(f.BaseEntriesHTMLPath)
 		if err != nil {
-			return fmt.Errorf("LoadHTML: %w", err)
+			return fmt.Errorf("loadHTML: error %s", err)
 		}
 		f.doc = soup.HTMLParse(string(data))
 		f.HeaderTitle = f.doc.Find("header").FullText()

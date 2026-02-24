@@ -155,7 +155,7 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 	return nil
 }
 
-func Serve(newsDir, newsStats string) *NewsServer {
+func Serve(newsDir string, newsStats string) *NewsServer {
 	s := &NewsServer{
 		NewsDir: newsDir,
 		Stats: stats.NewsStats{

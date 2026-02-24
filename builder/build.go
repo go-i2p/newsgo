@@ -167,7 +167,7 @@ func (nb *NewsBuilder) Build() (string, error) {
 	return gohtml.Format(str), nil
 }
 
-func Builder(newsFile, releasesJson, blocklistXML string) *NewsBuilder {
+func Builder(newsFile string, releasesJson string, blocklistXML string) *NewsBuilder {
 	nb := &NewsBuilder{
 		Feed: newsfeed.Feed{
 			EntriesHTMLPath: newsFile,

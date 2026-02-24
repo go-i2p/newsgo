@@ -5,7 +5,8 @@ import (
 	"io/ioutil"
 	"strings"
 
-	"i2pgit.org/idk/reseed-tools/su3"
+	//"github.com/go-i2p/reseed-tools/su3"
+	"i2pgit.org/go-i2p/reseed-tools/su3"
 )
 
 type NewsSigner struct {
