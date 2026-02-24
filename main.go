@@ -31,6 +31,12 @@ func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
 	}
 
 	privDer, _ := pem.Decode(privPem)
+	// pem.Decode returns nil when the file contains no PEM block (e.g. empty
+	// file, DER-encoded key, or wrong path). Guard before dereferencing to
+	// avoid a nil-pointer panic — mirrors the same guard in cmd/sign.go.
+	if privDer == nil {
+		return nil, fmt.Errorf("loadPrivateKey: no PEM block found in %s", path)
+	}
 	privKey, err := x509.ParsePKCS1PrivateKey(privDer.Bytes)
 	if nil != err {
 		return nil, err
@@ -57,8 +63,12 @@ var (
 	statsfile = flag.String("statsfile", "build/stats.json", "file to store stats in")
 	host      = flag.String("host", "127.0.0.1", "host to serve on")
 	port      = flag.String("port", "9696", "port to serve on")
-	i2p       = flag.Bool("i2p", isSamAround(), "automatically co-host on an I2P service using SAMv3")
-	tcp       = flag.Bool("http", true, "host on an HTTP service at host:port")
+	// Default to false so that isSamAround() is NOT called at package-init
+	// time (before main() even runs). This avoids a blocking net.Listen on
+	// port 7656 for every invocation including "build", "sign", and "help".
+	// The serve command probes for SAM lazily after flag.Parse() if needed.
+	i2p = flag.Bool("i2p", false, "automatically co-host on an I2P service using SAMv3")
+	tcp = flag.Bool("http", true, "host on an HTTP service at host:port")
 	// newsfile    = flag.String("newsfile", "data/entries.html", "entries to pass to news generator. If passed a directory, all `entries.html` files in the directory will be processed")
 	newsfile    = flag.String("newsfile", "data", "entries to pass to news generator. If passed a directory, all `entries.html` files in the directory will be processed")
 	blocklist   = flag.String("blockfile", "data/blocklist.xml", "block list file to pass to news generator")
@@ -225,6 +235,11 @@ func main() {
 	switch command {
 	case "serve":
 		s := server.Serve(*dir, *statsfile)
+		// Probe for a SAM gateway lazily, only when actually serving and only
+		// if the user did not explicitly pass -i2p=true on the command line.
+		if !*i2p {
+			*i2p = isSamAround()
+		}
 		if *tcp {
 			go func() {
 				if err := Serve(*host, *port, s); err != nil {
@@ -244,7 +259,11 @@ func main() {
 		go func() {
 			for sig := range c {
 				log.Println("captured: ", sig)
-				s.Stats.Save()
+				// Log any failure to persist stats so operators know the
+				// download counters were lost (e.g. read-only stats directory).
+				if err := s.Stats.Save(); err != nil {
+					log.Printf("Stats.Save: %v", err)
+				}
 				os.Exit(0)
 			}
 		}()

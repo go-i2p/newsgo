@@ -50,6 +50,13 @@ func fileType(file string) (string, error) {
 	if base == "" {
 		return "", fmt.Errorf("fileType: Invalid file path passed to type determinator")
 	}
+	// filepath.Ext returns only the last dot-segment (e.g. ".xml" for
+	// "news.atom.xml"), so compound extensions like ".atom.xml" must be
+	// tested with strings.HasSuffix before falling back to filepath.Ext.
+	if strings.HasSuffix(base, ".atom.xml") {
+		// RFC 4287 / IANA media type for Atom feeds.
+		return "application/atom+xml", nil
+	}
 	extension := filepath.Ext(base)
 	switch extension {
 	case ".su3":
@@ -57,8 +64,6 @@ func fileType(file string) (string, error) {
 	case ".html":
 		return "text/html", nil
 	case ".xml":
-		return "application/rss+xml", nil
-	case ".atom.xml":
 		return "application/rss+xml", nil
 	case ".svg":
 		return "image/svg+xml", nil
@@ -87,7 +92,9 @@ func openDirectory(wd string) (string, error) {
 	readme += fmt.Sprintf("%s\n", "")
 	for _, file := range files {
 		if !file.IsDir() {
-			fmt.Println(file.Name(), file.IsDir())
+			// Use log.Println so this output goes through the same log
+			// destination as all other server messages (timestamped, etc.).
+			log.Println(file.Name(), file.IsDir())
 			xname := filepath.Join(wd, file.Name())
 			bytes, err := ioutil.ReadFile(xname)
 			if err != nil {
@@ -96,7 +103,7 @@ func openDirectory(wd string) (string, error) {
 			sum := fmt.Sprintf("%x", sha256.Sum256(bytes))
 			readme += fmt.Sprintf(" - [%s](%s/%s) : `%d` : `%s` - `%s`\n", file.Name(), filepath.Base(nwd), filepath.Base(file.Name()), file.Size(), file.Mode(), sum)
 		} else {
-			fmt.Println(file.Name(), file.IsDir())
+			log.Println(file.Name(), file.IsDir())
 			readme += fmt.Sprintf(" - [%s](%s/) : `%d` : `%s`\n", file.Name(), file.Name(), file.Size(), file.Mode())
 		}
 	}
