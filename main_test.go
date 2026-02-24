@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -86,5 +88,60 @@ func TestSignCommandTargetsAtomXML(t *testing.T) {
 		if got != c.signed {
 			t.Errorf("HasSuffix(%q, \".atom.xml\") = %v, want %v", c.path, got, c.signed)
 		}
+	}
+}
+
+// TestLoadPrivateKey_NilPEMGuard verifies that loadPrivateKey returns a
+// descriptive error instead of panicking when the key file contains no PEM
+// block (e.g. empty file, wrong path, DER-encoded key).
+// This guards against the critical nil-pointer dereference reported in the
+// audit where pem.Decode returns nil and the old code immediately called
+// privDer.Bytes without a nil check.
+func TestLoadPrivateKey_NilPEMGuard(t *testing.T) {
+	t.Run("empty file", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "key*.pem")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		_, err = loadPrivateKey(f.Name())
+		if err == nil {
+			t.Fatal("expected error for empty key file, got nil")
+		}
+		if !strings.Contains(err.Error(), "no PEM block found") {
+			t.Errorf("error message %q does not mention 'no PEM block found'", err.Error())
+		}
+	})
+
+	t.Run("non-PEM content", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "not_a_key.pem")
+		if err := os.WriteFile(path, []byte("this is not PEM data\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := loadPrivateKey(path)
+		if err == nil {
+			t.Fatal("expected error for non-PEM key file, got nil")
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		_, err := loadPrivateKey(filepath.Join(t.TempDir(), "does_not_exist.pem"))
+		if err == nil {
+			t.Fatal("expected error for missing key file, got nil")
+		}
+	})
+}
+
+// TestI2PFlagDefault verifies that the -i2p flag defaults to false so that
+// isSamAround() is no longer called at package-init time (which would fire a
+// blocking net.Listen for every sub-command invocation including build/sign).
+func TestI2PFlagDefault(t *testing.T) {
+	f := flag.Lookup("i2p")
+	if f == nil {
+		t.Fatal("flag -i2p is not registered")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("-i2p default = %q, want \"false\"; SAM probe must not run at package init", f.DefValue)
 	}
 }

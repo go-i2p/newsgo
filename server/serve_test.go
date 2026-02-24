@@ -89,6 +89,41 @@ func TestServeHTTP_DirectoryListing(t *testing.T) {
 	}
 }
 
+// TestFileType_AtomXML verifies that ".atom.xml" files are detected as Atom
+// feeds and NOT as generic XML. filepath.Ext returns ".xml" for these files,
+// so the old case ".atom.xml" switch arm was unreachable dead code. The fix
+// uses strings.HasSuffix before the extension switch.
+func TestFileType_AtomXML(t *testing.T) {
+	tests := []struct {
+		file      string
+		wantType  string
+		wantError bool
+	}{
+		{"news.atom.xml", "application/atom+xml", false},
+		{"sub/news_de.atom.xml", "application/atom+xml", false},
+		{"news.xml", "application/rss+xml", false},
+		{"index.html", "text/html", false},
+		{"update.su3", "application/x-i2p-su3-news", false},
+		{"langstats.svg", "image/svg+xml", false},
+	}
+	for _, tt := range tests {
+		got, err := fileType(tt.file)
+		if tt.wantError {
+			if err == nil {
+				t.Errorf("fileType(%q): expected error, got nil", tt.file)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("fileType(%q): unexpected error: %v", tt.file, err)
+			continue
+		}
+		if got != tt.wantType {
+			t.Errorf("fileType(%q) = %q, want %q", tt.file, got, tt.wantType)
+		}
+	}
+}
+
 func statsForTest(dir string) stats.NewsStats {
 	sf := filepath.Join(dir, "stats.json")
 	ns := stats.NewsStats{StateFile: sf}
