@@ -1,0 +1,244 @@
+package newsbuilder
+
+import (
+	"encoding/xml"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// validReleasesJSON is a minimal releases.json fixture for testing.
+const validReleasesJSON = `[{
+"date": "2022-11-21",
+"version": "2.0.0",
+"minVersion": "0.9.9",
+"minJavaVersion": "1.8",
+"updates": {
+"su3": {
+"torrent": "magnet:?xt=urn:btih:abc123",
+"url": [
+"http://stats.i2p/i2p/2.0.0/i2pupdate.su3",
+"http://example.b32.i2p/releases/2.0.0/i2pupdate.su3"
+]
+}
+}
+}]`
+
+// writeFixtures writes the minimum set of files needed by NewsBuilder.Build()
+// into dir and returns a configured *NewsBuilder pointing at them.
+func writeFixtures(t *testing.T, dir string) *NewsBuilder {
+	t.Helper()
+	releasesPath := filepath.Join(dir, "releases.json")
+	blocklistPath := filepath.Join(dir, "blocklist.xml")
+	entriesPath := filepath.Join(dir, "entries.html")
+
+	if err := os.WriteFile(releasesPath, []byte(validReleasesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Minimal valid blocklist fragment (must be XML-parseable in context).
+	if err := os.WriteFile(blocklistPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	html := `<html><body>
+<header>Test Feed</header>
+<article id="urn:test:1" title="Title" href="http://example.com"
+         author="Author" published="2024-01-01" updated="2024-01-02">
+<details><summary>Summary</summary></details>
+<p>Body</p>
+</article>
+</body></html>`
+	if err := os.WriteFile(entriesPath, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	nb := Builder(entriesPath, releasesPath, blocklistPath)
+	nb.URNID = "00000000-0000-0000-0000-000000000000"
+	return nb
+}
+
+// --- JSONtoXML tests ---
+
+// TestJSONtoXML_ValidInput verifies that well-formed JSON produces the expected
+// XML fragment without panicking.
+func TestJSONtoXML_ValidInput(t *testing.T) {
+	dir := t.TempDir()
+	rp := filepath.Join(dir, "releases.json")
+	if err := os.WriteFile(rp, []byte(validReleasesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := &NewsBuilder{ReleasesJson: rp}
+	got, err := nb.JSONtoXML()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Attribute values must be quoted.
+	if !strings.Contains(got, `date="2022-11-21"`) {
+		t.Errorf("date attribute not quoted; output: %s", got)
+	}
+	if !strings.Contains(got, `minVersion="0.9.9"`) {
+		t.Errorf("minVersion attribute not quoted; output: %s", got)
+	}
+	if !strings.Contains(got, `minJavaVersion="1.8"`) {
+		t.Errorf("minJavaVersion attribute not quoted; output: %s", got)
+	}
+	// Version element must be present.
+	if !strings.Contains(got, "<i2p:version>2.0.0</i2p:version>") {
+		t.Errorf("version element missing; output: %s", got)
+	}
+	// Both URLs must appear.
+	if !strings.Contains(got, "stats.i2p") {
+		t.Errorf("first URL missing; output: %s", got)
+	}
+	if !strings.Contains(got, "example.b32.i2p") {
+		t.Errorf("second URL missing; output: %s", got)
+	}
+}
+
+// TestJSONtoXML_MissingUpdatesKey verifies that an absent "updates" key returns
+// a descriptive error instead of panicking with a nil interface conversion.
+func TestJSONtoXML_MissingUpdatesKey(t *testing.T) {
+	dir := t.TempDir()
+	rp := filepath.Join(dir, "releases.json")
+	// No "updates" field.
+	j := `[{"date":"2022-11-21","version":"2.0.0","minVersion":"0.9.9","minJavaVersion":"1.8"}]`
+	if err := os.WriteFile(rp, []byte(j), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := &NewsBuilder{ReleasesJson: rp}
+	_, err := nb.JSONtoXML()
+	if err == nil {
+		t.Fatal("expected error for missing 'updates' key, got nil")
+	}
+}
+
+// TestJSONtoXML_MissingSu3Key verifies that an absent "su3" key returns an error.
+func TestJSONtoXML_MissingSu3Key(t *testing.T) {
+	dir := t.TempDir()
+	rp := filepath.Join(dir, "releases.json")
+	j := `[{"date":"2022-11-21","version":"2.0.0","minVersion":"0.9.9","minJavaVersion":"1.8","updates":{}}]`
+	if err := os.WriteFile(rp, []byte(j), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := &NewsBuilder{ReleasesJson: rp}
+	_, err := nb.JSONtoXML()
+	if err == nil {
+		t.Fatal("expected error for missing 'su3' key, got nil")
+	}
+}
+
+// TestJSONtoXML_EmptyArray verifies that an empty JSON array returns an error
+// rather than an index-out-of-range panic.
+func TestJSONtoXML_EmptyArray(t *testing.T) {
+	dir := t.TempDir()
+	rp := filepath.Join(dir, "releases.json")
+	if err := os.WriteFile(rp, []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := &NewsBuilder{ReleasesJson: rp}
+	_, err := nb.JSONtoXML()
+	if err == nil {
+		t.Fatal("expected error for empty releases array, got nil")
+	}
+}
+
+// TestJSONtoXML_MissingStringField verifies that a missing scalar field returns
+// a clear error.
+func TestJSONtoXML_MissingStringField(t *testing.T) {
+	dir := t.TempDir()
+	rp := filepath.Join(dir, "releases.json")
+	// "version" is absent.
+	j := `[{"date":"2022-11-21","minVersion":"0.9.9","minJavaVersion":"1.8",
+         "updates":{"su3":{"torrent":"magnet:x","url":["http://example.com"]}}}]`
+	if err := os.WriteFile(rp, []byte(j), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := &NewsBuilder{ReleasesJson: rp}
+	_, err := nb.JSONtoXML()
+	if err == nil {
+		t.Fatal("expected error for missing 'version' field, got nil")
+	}
+}
+
+// --- Build() timestamp tests ---
+
+// TestBuild_TimestampIsUTC verifies that the <updated> timestamp uses a UTC
+// time value. The old code used time.Now() (local time) with a hardcoded
+// +00:00 offset, which produces a wrong timestamp on non-UTC hosts.
+func TestBuild_TimestampIsUTC(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	// gohtml.Format wraps the XML; look for the updated element content.
+	// The timestamp must end with +00:00 and the fractional seconds must be
+	// exactly 3 digits (milliseconds).
+	rfc3339ms := regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+00:00`)
+	if !rfc3339ms.MatchString(feed) {
+		t.Errorf("no RFC-3339 millisecond timestamp with +00:00 found in output;\ngot: %s", feed)
+	}
+}
+
+// TestBuild_AttributesAreQuoted verifies that the <i2p:release> element has
+// all its attribute values enclosed in double quotes, as required by XML.
+func TestBuild_AttributesAreQuoted(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	if !strings.Contains(feed, `date="2022-11-21"`) {
+		t.Errorf(`date attribute not quoted; output snippet: %s`, excerptAround(feed, "i2p:release"))
+	}
+	if !strings.Contains(feed, `minVersion="0.9.9"`) {
+		t.Errorf(`minVersion attribute not quoted`)
+	}
+	if !strings.Contains(feed, `minJavaVersion="1.8"`) {
+		t.Errorf(`minJavaVersion attribute not quoted`)
+	}
+}
+
+// TestBuild_ProducesWellFormedXML verifies that the generated Atom feed can be
+// parsed by the standard XML decoder.
+func TestBuild_ProducesWellFormedXML(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	// xml.Unmarshal into a generic token stream is the simplest well-formedness check.
+	dec := xml.NewDecoder(strings.NewReader(feed))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("generated feed is not well-formed XML: %v", err)
+			break
+		}
+	}
+}
+
+// excerptAround returns a short substring of s centred on the first occurrence
+// of substr, useful for test failure messages.
+func excerptAround(s, substr string) string {
+	idx := strings.Index(s, substr)
+	if idx < 0 {
+		return s
+	}
+	start := idx - 100
+	if start < 0 {
+		start = 0
+	}
+	end := idx + 200
+	if end > len(s) {
+		end = len(s)
+	}
+	return s[start:end]
+}

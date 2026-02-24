@@ -23,41 +23,104 @@ type NewsBuilder struct {
 	SUBTITLE     string
 }
 
+// jsonStr safely extracts a string value from a JSON map, returning a
+// descriptive error if the key is absent or has a non-string type. This
+// avoids the unrecovered panics that bare type assertions cause when the
+// releases JSON is malformed or incomplete.
+func jsonStr(m map[string]interface{}, key string) (string, error) {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return "", fmt.Errorf("JSONtoXML: missing field %q", key)
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("JSONtoXML: field %q is not a string (got %T)", key, v)
+	}
+	return s, nil
+}
+
+// JSONtoXML reads the releases JSON file and returns the corresponding
+// <i2p:release> XML fragment. All type assertions are guarded so that
+// malformed input returns a descriptive error instead of panicking.
+//
+// Example output:
+//
+//	<i2p:release date="2022-11-21" minVersion="0.9.9" minJavaVersion="1.8">
+//	  <i2p:version>2.0.0</i2p:version>
+//	  <i2p:update type="su3">...</i2p:update>
+//	</i2p:release>
 func (nb *NewsBuilder) JSONtoXML() (string, error) {
 	content, err := ioutil.ReadFile(nb.ReleasesJson)
 	if err != nil {
 		return "", err
 	}
-	// Now let's unmarshall the data into `payload`
 	var payload []map[string]interface{}
-	err = json.Unmarshal(content, &payload)
+	if err = json.Unmarshal(content, &payload); err != nil {
+		return "", err
+	}
+	if len(payload) == 0 {
+		return "", fmt.Errorf("JSONtoXML: releases JSON array is empty")
+	}
+	release := payload[0]
+
+	releasedate, err := jsonStr(release, "date")
 	if err != nil {
 		return "", err
 	}
-	str := ""
-	/*
-			<i2p:release date="2022-11-21" minVersion="0.9.9" minJavaVersion="1.8">
-		    <i2p:version>2.0.0</i2p:version>
-		    <i2p:update type="su3">
-		      <i2p:torrent href="magnet:?xt=urn:btih:a50f8479a39896f00431d7b500447fe303d2b6b5&amp;dn=i2pupdate-2.0.0.su3&amp;tr=http://tracker2.postman.i2p/announce.php"/>
-		      <i2p:url href="http://stats.i2p/i2p/2.0.0/i2pupdate.su3"/>
-		      <i2p:url href="http://mgp6yzdxeoqds3wucnbhfrdgpjjyqbiqjdwcfezpul3or7bzm4ga.b32.i2p/releases/2.0.0/i2pupdate.su3"/>
-		    </i2p:update>
-		  </i2p:release>
-	*/
-	releasedate := payload[0]["date"]
-	version := payload[0]["version"]
-	minVersion := payload[0]["minVersion"]
-	minJavaVersion := payload[0]["minJavaVersion"]
-	updates := payload[0]["updates"].(map[string]interface{})["su3"].(map[string]interface{})
-	magnet := updates["torrent"]
-	urls := updates["url"].([]interface{})
-	str += "<i2p:release date=" + releasedate.(string) + " minVersion=" + minVersion.(string) + " minJavaVersion=" + minJavaVersion.(string) + ">\n"
-	str += "<i2p:version>" + version.(string) + "</i2p:version>"
+	version, err := jsonStr(release, "version")
+	if err != nil {
+		return "", err
+	}
+	minVersion, err := jsonStr(release, "minVersion")
+	if err != nil {
+		return "", err
+	}
+	minJavaVersion, err := jsonStr(release, "minJavaVersion")
+	if err != nil {
+		return "", err
+	}
+
+	updatesRaw, ok := release["updates"]
+	if !ok || updatesRaw == nil {
+		return "", fmt.Errorf("JSONtoXML: missing field \"updates\"")
+	}
+	updatesMap, ok := updatesRaw.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("JSONtoXML: field \"updates\" is not an object")
+	}
+	su3Raw, ok := updatesMap["su3"]
+	if !ok || su3Raw == nil {
+		return "", fmt.Errorf("JSONtoXML: missing field \"updates.su3\"")
+	}
+	su3, ok := su3Raw.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("JSONtoXML: field \"updates.su3\" is not an object")
+	}
+
+	magnet, err := jsonStr(su3, "torrent")
+	if err != nil {
+		return "", err
+	}
+	urlsRaw, ok := su3["url"]
+	if !ok || urlsRaw == nil {
+		return "", fmt.Errorf("JSONtoXML: missing field \"updates.su3.url\"")
+	}
+	urlSlice, ok := urlsRaw.([]interface{})
+	if !ok {
+		return "", fmt.Errorf("JSONtoXML: field \"updates.su3.url\" is not an array")
+	}
+
+	// Attribute values are quoted as required by the XML specification.
+	str := "<i2p:release date=\"" + releasedate + "\" minVersion=\"" + minVersion + "\" minJavaVersion=\"" + minJavaVersion + "\">\n"
+	str += "<i2p:version>" + version + "</i2p:version>"
 	str += "<i2p:update type=\"su3\">"
-	str += "<i2p:torrent href=\"" + magnet.(string) + "\"/>"
-	for _, u := range urls {
-		str += "<i2p:url href=\"" + u.(string) + "\"/>"
+	str += "<i2p:torrent href=\"" + magnet + "\"/>"
+	for i, u := range urlSlice {
+		us, ok := u.(string)
+		if !ok {
+			return "", fmt.Errorf("JSONtoXML: updates.su3.url[%d] is not a string", i)
+		}
+		str += "<i2p:url href=\"" + us + "\"/>"
 	}
 	str += "</i2p:update>"
 	str += "</i2p:release>"
@@ -68,13 +131,16 @@ func (nb *NewsBuilder) Build() (string, error) {
 	if err := nb.Feed.LoadHTML(); err != nil {
 		return "", fmt.Errorf("Build: error %s", err.Error())
 	}
-	current_time := time.Now()
+	// Use UTC explicitly so the hardcoded +00:00 offset is always correct.
+	// Dividing nanoseconds by 1,000,000 gives milliseconds (0-999); %03d
+	// zero-pads to the 3-digit width required by RFC 3339.
+	currentTime := time.Now().UTC()
 	str := "<?xml version='1.0' encoding='UTF-8'?>"
 	str += "<feed xmlns:i2p=\"http://geti2p.net/en/docs/spec/updates\" xmlns=\"http://www.w3.org/2005/Atom\" xml:lang=\"en\">"
 	str += "<id>" + "urn:uuid:" + nb.URNID + "</id>"
 	str += "<title>" + nb.TITLE + "</title>"
-	milli := current_time.Nanosecond() / 1000
-	t := fmt.Sprintf("%d-%02d-%02dT%02d:%02d:%02d.%02d+00:00\n", current_time.Year(), current_time.Month(), current_time.Day(), current_time.Hour(), current_time.Minute(), current_time.Second(), milli)
+	milli := currentTime.Nanosecond() / 1_000_000
+	t := fmt.Sprintf("%d-%02d-%02dT%02d:%02d:%02d.%03d+00:00\n", currentTime.Year(), currentTime.Month(), currentTime.Day(), currentTime.Hour(), currentTime.Minute(), currentTime.Second(), milli)
 	str += "<updated>" + t + "</updated>"
 	str += "<link href=\"" + nb.SITEURL + "\"/>"
 	str += "<link href=\"" + nb.MAINFEED + "\" rel=\"self\"/>"
