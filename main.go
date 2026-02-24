@@ -61,14 +61,14 @@ var (
 	tcp       = flag.Bool("http", true, "host on an HTTP service at host:port")
 	// newsfile    = flag.String("newsfile", "data/entries.html", "entries to pass to news generator. If passed a directory, all `entries.html` files in the directory will be processed")
 	newsfile    = flag.String("newsfile", "data", "entries to pass to news generator. If passed a directory, all `entries.html` files in the directory will be processed")
-	bloclist    = flag.String("blocklist", "data/blocklist.xml", "block list file to pass to news generator")
+	blocklist   = flag.String("blockfile", "data/blocklist.xml", "block list file to pass to news generator")
 	releasejson = flag.String("releasejson", "data/releases.json", "json file describing an update to pass to news generator")
 	title       = flag.String("feedtitle", "I2P News", "title to use for the RSS feed to pass to news generator")
 	subtitle    = flag.String("feedsubtitle", "News feed, and router updates", "subtitle to use for the RSS feed to pass to news generator")
 	site        = flag.String("feedsite", "http://i2p-projekt.i2p", "site for the RSS feed to pass to news generator")
-	mainurl     = flag.String("feedmain", DefaultFeedURL(), "Primary newsfeed for updates to pass to news generator")
+	mainurl     = flag.String("feedmain", "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml", "Primary newsfeed for updates to pass to news generator")
 	backupurl   = flag.String("feedbackup", "http://dn3tvalnjz432qkqsvpfdqrwpqkw3ye4n4i2uyfr4jexvo3sp5ka.b32.i2p/news/news.atom.xml", "Backup newsfeed for updates to pass to news generator")
-	urn         = flag.String("feeduid", uuid.New().String(), "UUID to use for the RSS feed to pass to news generator")
+	urn         = flag.String("feeduri", uuid.New().String(), "UUID to use for the RSS feed to pass to news generator")
 	builddir    = flag.String("builddir", "build", "Build directory to output feeds to.")
 	signerid    = flag.String("signerid", "null@example.i2p", "ID to use when signing the news")
 	signingkey  = flag.String("signingkey", "signing_key.pem", "Path to a signing key")
@@ -187,7 +187,7 @@ func DefaultFeedURL() string {
 }
 
 func Build(newsFile string) {
-	news := builder.Builder(newsFile, *releasejson, *bloclist)
+	news := builder.Builder(newsFile, *releasejson, *blocklist)
 	news.TITLE = *title
 	news.SITEURL = *site
 	news.MAINFEED = *mainurl
@@ -271,19 +271,23 @@ func main() {
 			Build(*newsfile)
 		}
 	case "sign":
-		f, e := os.Stat(*newsfile)
+		// Sign walks the build output directory for .atom.xml feeds produced by
+		// the build command, not the source directory. Walking the source dir
+		// for .html files would overwrite source files with binary su3 data.
+		f, e := os.Stat(*builddir)
 		if e != nil {
 			panic(e)
 		}
 		if f.IsDir() {
-			err := filepath.Walk(*newsfile,
+			err := filepath.Walk(*builddir,
 				func(path string, info os.FileInfo, err error) error {
 					if err != nil {
 						return err
 					}
-					ext := filepath.Ext(path)
-					if ext == ".html" {
-						Sign(path)
+					if strings.HasSuffix(path, ".atom.xml") {
+						if signErr := Sign(path); signErr != nil {
+							log.Printf("Sign %s: %v", path, signErr)
+						}
 					}
 					return nil
 				})
@@ -291,7 +295,9 @@ func main() {
 				log.Println(err)
 			}
 		} else {
-			Sign(*newsfile)
+			if err := Sign(*builddir); err != nil {
+				log.Printf("Sign %s: %v", *builddir, err)
+			}
 		}
 	case "help":
 		Help()
