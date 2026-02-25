@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -218,7 +220,7 @@ func validateBlocklistXML(content []byte) error {
 	dec := xml.NewDecoder(bytes.NewReader(wrapped))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

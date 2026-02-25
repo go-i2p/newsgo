@@ -52,7 +52,15 @@ func sigTypeForKey(key crypto.Signer) (uint16, error) {
 // CreateSu3 reads the Atom XML file at xmldata, wraps it in an su3 container
 // signed with ns.SigningKey, and writes the result to a file with the same
 // base name but the ".atom.xml" suffix replaced by ".su3".
+//
+// CreateSu3 returns an error if xmldata does not end with ".atom.xml".  This
+// guard prevents a dangerous silent overwrite: strings.Replace would return the
+// input path unchanged for any other suffix, causing os.WriteFile to destroy
+// the source file with raw su3 binary data.
 func (ns *NewsSigner) CreateSu3(xmldata string) error {
+	if !strings.HasSuffix(xmldata, ".atom.xml") {
+		return fmt.Errorf("newssigner: CreateSu3: input path %q does not have .atom.xml suffix; refusing to derive output path to avoid overwriting source", xmldata)
+	}
 	su3File := su3.New()
 	su3File.FileType = su3.FileTypeXML
 	su3File.ContentType = su3.ContentTypeNews
@@ -78,6 +86,6 @@ func (ns *NewsSigner) CreateSu3(xmldata string) error {
 	if err != nil {
 		return err
 	}
-	outfile := strings.Replace(xmldata, ".atom.xml", ".su3", -1)
+	outfile := strings.TrimSuffix(xmldata, ".atom.xml") + ".su3"
 	return os.WriteFile(outfile, b, 0o644)
 }

@@ -2,6 +2,8 @@ package newsfeed
 
 import (
 	"encoding/xml"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,7 +209,7 @@ func TestEntry_XMLEscaping(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(document))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

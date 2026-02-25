@@ -2,6 +2,8 @@ package newsbuilder
 
 import (
 	"encoding/xml"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -263,7 +265,7 @@ func TestBuild_ProducesWellFormedXML(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(feed))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -309,7 +311,7 @@ func TestBuild_XMLEscapingInMetadata(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(feed))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -365,7 +367,7 @@ func TestBuild_XMLEscapingInArticle(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(feed))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -398,7 +400,7 @@ func TestJSONtoXML_XMLEscapingInURLs(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(doc))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -502,7 +504,7 @@ func TestBuild_MissingBlocklistFile(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(feed))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -742,7 +744,7 @@ func TestBuild_XmlLangAttributeIsWellFormedXML(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(feed))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -787,7 +789,7 @@ func TestBuild_ValidBlocklistFragment(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(feed))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -883,7 +885,7 @@ func TestBuild_HeaderTitle_BothEmpty(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(feed))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -934,7 +936,7 @@ func TestBuild_HeaderTitle_XMLEscaped(t *testing.T) {
 	dec := xml.NewDecoder(strings.NewReader(feed))
 	for {
 		_, err := dec.Token()
-		if err != nil && err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

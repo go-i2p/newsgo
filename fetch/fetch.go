@@ -9,6 +9,7 @@ package newsfetch
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,11 +29,21 @@ var (
 	garlicMu     sync.Mutex
 	sharedGarlic *onramp.Garlic
 	garlicErr    error
+	garlicClosed bool // protected by garlicMu; set true permanently by CloseSharedGarlic
 )
+
+// ErrGarlicClosed is returned by NewFetcher when the shared Garlic session has
+// been closed via CloseSharedGarlic and cannot be re-initialised.  Callers may
+// detect this specific condition with errors.Is.
+var ErrGarlicClosed = errors.New("garlic session closed; cannot create new fetcher")
 
 // initSharedGarlic initialises the package-level Garlic session exactly once.
 // samAddr may be empty, in which case the onramp default (127.0.0.1:7656) is
 // used.  Should be called before the first Fetcher is constructed.
+//
+// If CloseSharedGarlic has been called before or concurrently with this
+// function, initSharedGarlic discards any newly-created Garlic session and
+// returns ErrGarlicClosed, preventing a nil-dereference in NewFetcher.
 func initSharedGarlic(samAddr string) (*onramp.Garlic, error) {
 	garlicOnce.Do(func() {
 		var g *onramp.Garlic
@@ -43,7 +54,15 @@ func initSharedGarlic(samAddr string) (*onramp.Garlic, error) {
 			g = &onramp.Garlic{}
 		}
 		garlicMu.Lock()
-		sharedGarlic, garlicErr = g, err
+		if garlicClosed {
+			// CloseSharedGarlic ran before or concurrently; discard the session
+			// we just created so garlicErr = ErrGarlicClosed remains in effect.
+			if g != nil {
+				g.Close()
+			}
+		} else {
+			sharedGarlic, garlicErr = g, err
+		}
 		garlicMu.Unlock()
 	})
 	garlicMu.Lock()
@@ -56,6 +75,9 @@ func initSharedGarlic(samAddr string) (*onramp.Garlic, error) {
 // completes).  It is safe to call even if the session was never opened.
 // Concurrent calls with NewFetcher / initSharedGarlic are safe; sharedGarlic
 // is always accessed under garlicMu.
+//
+// After CloseSharedGarlic returns, any subsequent call to NewFetcher will
+// return ErrGarlicClosed rather than panicking with a nil pointer dereference.
 func CloseSharedGarlic() {
 	garlicMu.Lock()
 	defer garlicMu.Unlock()
@@ -63,6 +85,8 @@ func CloseSharedGarlic() {
 		sharedGarlic.Close()
 		sharedGarlic = nil // prevent double-close
 	}
+	garlicClosed = true
+	garlicErr = ErrGarlicClosed
 }
 
 // Fetcher fetches news files from an I2P news server using a shared Garlic

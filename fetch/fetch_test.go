@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -300,4 +301,30 @@ func TestCloseSharedGarlic_Concurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestNewFetcher_AfterClose_ReturnsError verifies that NewFetcher called after
+// CloseSharedGarlic returns a non-nil error instead of panicking via a nil
+// pointer dereference inside NewFetcherFromGarlic.  This covers the
+// use-after-close scenario documented in the AUDIT.
+func TestNewFetcher_AfterClose_ReturnsError(t *testing.T) {
+	CloseSharedGarlic() // ensure session is marked closed regardless of prior state
+	_, err := NewFetcher("")
+	if err == nil {
+		t.Fatal("expected error from NewFetcher after CloseSharedGarlic, got nil")
+	}
+}
+
+// TestNewFetcher_AfterClose_ErrorWrapsErrGarlicClosed verifies that the error
+// returned by NewFetcher after CloseSharedGarlic wraps ErrGarlicClosed so
+// callers can detect the specific condition with errors.Is.
+func TestNewFetcher_AfterClose_ErrorWrapsErrGarlicClosed(t *testing.T) {
+	CloseSharedGarlic()
+	_, err := NewFetcher("")
+	if err == nil {
+		t.Fatal("expected error from NewFetcher after CloseSharedGarlic, got nil")
+	}
+	if !errors.Is(err, ErrGarlicClosed) {
+		t.Errorf("expected errors.Is(err, ErrGarlicClosed) to be true; got: %v", err)
+	}
 }
