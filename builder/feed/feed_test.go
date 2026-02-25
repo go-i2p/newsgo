@@ -70,25 +70,98 @@ func TestLoadHTML_ValidFile(t *testing.T) {
 	}
 }
 
-// TestContent_ShortArticle verifies that Content() does not panic when the
-// parsed HTML yields fewer than 5 nodes. The old code sliced articleBody[5:]
-// unconditionally, causing a runtime panic on minimal articles.
+// TestContent_ShortArticle verifies that Content() returns the body text even
+// for a minimal article that has no <details>/<summary> wrapper — the old
+// magic-number-5 threshold silently dropped content in this case.
 func TestContent_ShortArticle(t *testing.T) {
 	a := &Article{content: "<article><p>Hi</p></article>"}
-	got := a.Content() // must not panic
-	_ = got
+	got := a.Content()
+	if !strings.Contains(got, "Hi") {
+		t.Errorf("Content() dropped body for minimal article without <details>; got: %q", got)
+	}
 }
 
-// TestContent_NormalArticle verifies that Content() does not panic for a
-// normal article that produces more than 5 soup nodes.
+// TestContent_NormalArticle verifies that Content() includes all <p> body
+// children and excludes the <details>/<summary> metadata block.
 func TestContent_NormalArticle(t *testing.T) {
 	a := &Article{content: `<article id="x" title="T" href="" author="A" published="" updated="">
 <details><summary>Summary</summary></details>
 <p>First paragraph</p>
 <p>Second paragraph</p>
 </article>`}
+	got := a.Content()
+	for _, want := range []string{"First paragraph", "Second paragraph"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Content() missing %q; got: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Summary") {
+		t.Errorf("Content() included <details>/<summary> text; got: %q", got)
+	}
+}
+
+// TestContent_MinimalArticle_WithoutDetails verifies Content() for an article
+// whose body consists only of bare children, no <details>/<summary> wrapper.
+func TestContent_MinimalArticle_WithoutDetails(t *testing.T) {
+	a := &Article{content: "<article><p>Hello world — no details wrapper.</p></article>"}
+	got := a.Content()
+	if !strings.Contains(got, "Hello world") {
+		t.Errorf("Content() dropped body for article without <details>; got: %q", got)
+	}
+}
+
+// TestContent_StandardArticle_ExcludesDetails verifies that the <details> block
+// is excluded from Content() output and body text is preserved.
+func TestContent_StandardArticle_ExcludesDetails(t *testing.T) {
+	a := &Article{content: `<article>
+<details><summary>This is the summary</summary></details>
+<p>This is the body</p>
+</article>`}
+	got := a.Content()
+	if !strings.Contains(got, "This is the body") {
+		t.Errorf("Content() dropped body text; got: %q", got)
+	}
+	if strings.Contains(got, "This is the summary") {
+		t.Errorf("Content() included <details> summary text; got: %q", got)
+	}
+}
+
+// TestContent_MultipleBodyElements verifies that Content() returns all body
+// elements when the article has multiple paragraphs after <details>.
+func TestContent_MultipleBodyElements(t *testing.T) {
+	a := &Article{content: `<article>
+<details><summary>Summary</summary></details>
+<p>First paragraph</p>
+<p>Second paragraph</p>
+<p>Third paragraph</p>
+</article>`}
+	got := a.Content()
+	for _, want := range []string{"First paragraph", "Second paragraph", "Third paragraph"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Content() missing %q; got: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Summary") {
+		t.Errorf("Content() included <details> text; got: %q", got)
+	}
+}
+
+// TestContent_EmptyBody verifies that Content() returns an empty string when
+// the article has only a <details> block and no other children.
+func TestContent_EmptyBody(t *testing.T) {
+	a := &Article{content: "<article><details><summary>Summary only</summary></details></article>"}
+	got := a.Content()
+	if strings.Contains(got, "Summary only") {
+		t.Errorf("Content() included <details> summary in empty-body article; got: %q", got)
+	}
+}
+
+// TestContent_NoArticleElement verifies that Content() returns an empty string
+// and does not panic when the stored HTML contains no <article> element.
+func TestContent_NoArticleElement(t *testing.T) {
+	a := &Article{content: "<div><p>Not an article</p></div>"}
 	got := a.Content() // must not panic
-	_ = got
+	_ = got            // empty string is expected; no assertion on value
 }
 
 // TestXmlEsc verifies that the xmlEsc helper correctly escapes the five

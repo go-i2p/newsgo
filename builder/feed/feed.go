@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/anaskhan96/soup"
+	"golang.org/x/net/html"
 )
 
 // xmlEsc returns s with XML-special characters replaced by their standard
@@ -98,20 +100,37 @@ type Article struct {
 	content string
 }
 
-// Content returns the HTML body of the article, skipping the first 5 soup
-// nodes which correspond to the wrapping <article> and <details>/<summary>
-// elements. Guards against short or minimal articles that produce fewer nodes.
+// Content returns the HTML body of the article by walking the direct children
+// of the <article> element and skipping the <details>/<summary> metadata block
+// (whose text is already stored in Article.Summary). This replaces the old
+// magic-number approach (skip first 5 nodes) which silently dropped content for
+// any article that did not use the <details>/<summary> idiom.
+//
+// If no <article> element is found in the stored HTML, Content logs the
+// problem and returns an empty string so the issue is visible at build time.
 func (a *Article) Content() string {
-	str := ""
-	doc := soup.HTMLParse(string(a.content))
-	articleBody := doc.FindAll("")
-	if len(articleBody) <= 5 {
-		return str
+	doc := soup.HTMLParse(a.content)
+	article := doc.Find("article")
+	if article.Error != nil {
+		// Emit a build-time warning so operators see missing content immediately
+		// instead of silently receiving an empty <content> Atom element.
+		log.Printf("Content: no <article> element found in stored HTML; content will be empty")
+		return ""
 	}
-	for _, v := range articleBody[5:] {
-		str += v.HTML()
+
+	var buf bytes.Buffer
+	// Walk direct children of <article>. The <details> element holds only the
+	// <summary> text that is already captured in Article.Summary; skip it so
+	// it does not appear twice (once in <summary> and once in <content>).
+	for node := article.Pointer.FirstChild; node != nil; node = node.NextSibling {
+		if node.Type == html.ElementNode && node.Data == "details" {
+			continue
+		}
+		if err := html.Render(&buf, node); err != nil {
+			log.Printf("Content: html.Render error: %v", err)
+		}
 	}
-	return str
+	return buf.String()
 }
 
 // Entry renders the Article as an Atom <entry> XML fragment. All metadata
