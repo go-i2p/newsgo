@@ -2,9 +2,9 @@ package newsstats
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/wcharczuk/go-chart/v2"
@@ -73,12 +73,12 @@ func (n *NewsStats) Increment(rq *http.Request) {
 // Safe for concurrent use: it holds a read lock while serialising.
 func (n *NewsStats) Save() error {
 	n.mu.RLock()
-	bytes, err := json.Marshal(n.DownloadLangs)
+	data, err := json.Marshal(n.DownloadLangs)
 	n.mu.RUnlock()
 	if err != nil {
 		return err
 	}
-	if err := ioutil.WriteFile(n.StateFile, bytes, 0o644); err != nil {
+	if err := os.WriteFile(n.StateFile, data, 0o644); err != nil {
 		return err
 	}
 	return nil
@@ -95,13 +95,13 @@ func (n *NewsStats) Load() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	bytes, err := ioutil.ReadFile(n.StateFile)
+	data, err := os.ReadFile(n.StateFile)
 	if err != nil {
 		// File missing or unreadable — start with an empty map.
 		n.DownloadLangs = make(map[string]int)
 		return
 	}
-	if err := json.Unmarshal(bytes, &n.DownloadLangs); err != nil {
+	if err := json.Unmarshal(data, &n.DownloadLangs); err != nil {
 		// Malformed JSON — start with an empty map.
 		n.DownloadLangs = make(map[string]int)
 		return

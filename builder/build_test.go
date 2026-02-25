@@ -273,3 +273,124 @@ func excerptAround(s, substr string) string {
 	}
 	return s[start:end]
 }
+
+// TestBuild_XMLEscapingInMetadata verifies that XML-special characters in
+// NewsBuilder metadata fields (TITLE, SUBTITLE, SITEURL) are escaped before
+// being inserted into the feed, producing well-formed XML.  A bare '&' in a
+// title or URL is extremely common in real deployments.
+func TestBuild_XMLEscapingInMetadata(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	nb.TITLE = "I2P News & Updates"
+	nb.SUBTITLE = "Feed for <i2p> network"
+	nb.SITEURL = "http://example.com/?a=1&b=2"
+
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	dec := xml.NewDecoder(strings.NewReader(feed))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("feed with special chars in metadata is not well-formed XML: %v\n\nfeed:\n%s", err, feed)
+			break
+		}
+	}
+	// Bare & must not survive into the output.
+	if strings.Contains(feed, "News & Updates") {
+		t.Errorf("bare & in TITLE not escaped; feed snippet: %s", excerptAround(feed, "title"))
+	}
+	if strings.Contains(feed, "?a=1&b=2") {
+		t.Errorf("bare & in SITEURL not escaped")
+	}
+}
+
+// TestBuild_XMLEscapingInArticle verifies that an article whose href contains
+// '&' produces well-formed XML in the full generated feed.  This is the most
+// common real-world trigger: news links frequently include query parameters.
+func TestBuild_XMLEscapingInArticle(t *testing.T) {
+	dir := t.TempDir()
+	entriesPath := filepath.Join(dir, "entries.html")
+	releasesPath := filepath.Join(dir, "releases.json")
+	blocklistPath := filepath.Join(dir, "blocklist.xml")
+
+	if err := os.WriteFile(releasesPath, []byte(validReleasesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blocklistPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Use HTML-encoded &amp; in the href value — the HTML parser decodes this
+	// to a bare '&', which xmlEsc must then re-encode as '&amp;' in the XML.
+	html := `<html><body>
+<header>Feed</header>
+<article id="urn:test:1" title="A &amp; B" href="http://example.com/page?a=1&amp;b=2"
+         author="Author" published="2024-01-01" updated="2024-01-02">
+<details><summary>Summary &amp; more</summary></details>
+<p>Body paragraph</p>
+<p>Extra paragraph</p>
+</article>
+</body></html>`
+	if err := os.WriteFile(entriesPath, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := Builder(entriesPath, releasesPath, blocklistPath)
+	nb.URNID = "00000000-0000-0000-0000-000000000000"
+
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	dec := xml.NewDecoder(strings.NewReader(feed))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("feed with & in article href is not well-formed XML: %v\n\nfeed:\n%s", err, feed)
+			break
+		}
+	}
+}
+
+// TestJSONtoXML_XMLEscapingInURLs verifies that URL values in releases.json
+// that contain '&' (e.g. from torrent magnet links or tracker query strings)
+// are XML-escaped in the generated <i2p:update> fragment.
+func TestJSONtoXML_XMLEscapingInURLs(t *testing.T) {
+	dir := t.TempDir()
+	rp := filepath.Join(dir, "releases.json")
+	// Torrent magnet link contains multiple & separators; these are common.
+	j := `[{"date":"2022-11-21","version":"2.0.0","minVersion":"0.9.9","minJavaVersion":"1.8",
+"updates":{"su3":{"torrent":"magnet:?xt=urn:btih:abc&tr=http://example.com&dn=file",
+"url":["http://stats.i2p/update.su3?a=1&b=2"]}}}]`
+	if err := os.WriteFile(rp, []byte(j), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := &NewsBuilder{ReleasesJson: rp}
+	got, err := nb.JSONtoXML()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The fragment must be parseable as XML (wrap in a root element for the decoder).
+	doc := "<root xmlns:i2p=\"http://geti2p.net/en/docs/spec/updates\">" + got + "</root>"
+	dec := xml.NewDecoder(strings.NewReader(doc))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("JSONtoXML with & in URL is not well-formed XML: %v\n\noutput:\n%s", err, got)
+			break
+		}
+	}
+	// Bare & must not appear in the output.
+	if strings.Contains(got, "btih:abc&tr=") {
+		t.Errorf("bare & in torrent href not escaped")
+	}
+}

@@ -1,11 +1,23 @@
 package newsfeed
 
 import (
+	"bytes"
+	"encoding/xml"
 	"fmt"
-	"io/ioutil"
+	"os"
 
 	"github.com/anaskhan96/soup"
 )
+
+// xmlEsc returns s with XML-special characters replaced by their standard
+// entity references, making the value safe for XML text content and attribute
+// values.  encoding/xml.EscapeText is the canonical implementation: it handles
+// &, <, >, ", and carriage return.
+func xmlEsc(s string) string {
+	var buf bytes.Buffer
+	xml.EscapeText(&buf, []byte(s)) //nolint:errcheck — bytes.Buffer.Write never returns an error
+	return buf.String()
+}
 
 type Feed struct {
 	HeaderTitle         string
@@ -16,7 +28,7 @@ type Feed struct {
 }
 
 func (f *Feed) LoadHTML() error {
-	data, err := ioutil.ReadFile(f.EntriesHTMLPath)
+	data, err := os.ReadFile(f.EntriesHTMLPath)
 	if err != nil {
 		return fmt.Errorf("LoadHTML: error %s", err)
 	}
@@ -27,7 +39,7 @@ func (f *Feed) LoadHTML() error {
 		f.ArticlesSet = append(f.ArticlesSet, article.HTML())
 	}
 	if f.BaseEntriesHTMLPath != "" {
-		data, err := ioutil.ReadFile(f.BaseEntriesHTMLPath)
+		data, err := os.ReadFile(f.BaseEntriesHTMLPath)
 		if err != nil {
 			return fmt.Errorf("LoadHTML: error %s", err)
 		}
@@ -90,15 +102,19 @@ func (a *Article) Content() string {
 }
 
 func (a *Article) Entry() string {
+	// All text and attribute values are XML-escaped via xmlEsc so that special
+	// characters such as '&' in URLs (?a=1&b=2) or '<' in titles do not
+	// produce malformed XML.  Content() returns raw XHTML embedded inside
+	// <content type="xhtml"> and must NOT be escaped — it is parsed as markup.
 	return fmt.Sprintf(
 		"<entry>\n\t<id>%s</id>\n\t<title>%s</title>\n\t<updated>%s</updated>\n\t<author><name>%s</name></author>\n\t<link href=\"%s\" rel=\"alternate\"/>\n\t<published>%s</published>\n\t<summary>%s</summary>\n\t<content type=\"xhtml\">\n\t\t<div xmlns=\"http://www.w3.org/1999/xhtml\">\n\t\t%s\n\t\t</div>\n\t</content>\n</entry>",
-		a.UID,
-		a.Title,
-		a.UpdatedDate,
-		a.Author,
-		a.Link,
-		a.PublishedDate,
-		a.Summary,
-		a.Content(),
+		xmlEsc(a.UID),
+		xmlEsc(a.Title),
+		xmlEsc(a.UpdatedDate),
+		xmlEsc(a.Author),
+		xmlEsc(a.Link),
+		xmlEsc(a.PublishedDate),
+		xmlEsc(a.Summary),
+		a.Content(), // raw XHTML — embedded markup, must not be double-escaped
 	)
 }

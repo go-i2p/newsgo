@@ -2,7 +2,7 @@ package newssigner
 
 import (
 	"crypto/rsa"
-	"io/ioutil"
+	"os"
 	"strings"
 
 	//"github.com/go-i2p/reseed-tools/su3"
@@ -19,7 +19,7 @@ func (ns *NewsSigner) CreateSu3(xmldata string) error {
 	su3File.FileType = su3.FileTypeXML
 	su3File.ContentType = su3.ContentTypeNews
 
-	data, err := ioutil.ReadFile(xmldata)
+	data, err := os.ReadFile(xmldata)
 	if nil != err {
 		return err
 	}
@@ -28,10 +28,10 @@ func (ns *NewsSigner) CreateSu3(xmldata string) error {
 	su3File.SignerID = []byte(ns.SignerID)
 	su3File.Sign(ns.SigningKey)
 
-	bytes, err := su3File.MarshalBinary()
+	b, err := su3File.MarshalBinary()
 	if err != nil {
 		return err
 	}
 	outfile := strings.Replace(xmldata, ".atom.xml", ".su3", -1)
-	return ioutil.WriteFile(outfile, bytes, 0o644)
+	return os.WriteFile(outfile, b, 0o644)
 }

@@ -1,9 +1,11 @@
 package newsbuilder
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"time"
 
 	newsfeed "github.com/go-i2p/newsgo/builder/feed"
@@ -21,6 +23,16 @@ type NewsBuilder struct {
 	MAINFEED     string
 	BACKUPFEED   string
 	SUBTITLE     string
+}
+
+// xmlEsc returns s with XML-special characters replaced by their standard
+// entity references, making the value safe for XML text content and attribute
+// values.  encoding/xml.EscapeText is the canonical implementation: it handles
+// &, <, >, ", and carriage return.
+func xmlEsc(s string) string {
+	var buf bytes.Buffer
+	xml.EscapeText(&buf, []byte(s)) //nolint:errcheck — bytes.Buffer.Write never returns an error
+	return buf.String()
 }
 
 // jsonStr safely extracts a string value from a JSON map, returning a
@@ -50,7 +62,7 @@ func jsonStr(m map[string]interface{}, key string) (string, error) {
 //	  <i2p:update type="su3">...</i2p:update>
 //	</i2p:release>
 func (nb *NewsBuilder) JSONtoXML() (string, error) {
-	content, err := ioutil.ReadFile(nb.ReleasesJson)
+	content, err := os.ReadFile(nb.ReleasesJson)
 	if err != nil {
 		return "", err
 	}
@@ -110,17 +122,17 @@ func (nb *NewsBuilder) JSONtoXML() (string, error) {
 		return "", fmt.Errorf("JSONtoXML: field \"updates.su3.url\" is not an array")
 	}
 
-	// Attribute values are quoted as required by the XML specification.
-	str := "<i2p:release date=\"" + releasedate + "\" minVersion=\"" + minVersion + "\" minJavaVersion=\"" + minJavaVersion + "\">\n"
-	str += "<i2p:version>" + version + "</i2p:version>"
+	// Attribute values are quoted and XML-escaped as required by the XML specification.
+	str := "<i2p:release date=\"" + xmlEsc(releasedate) + "\" minVersion=\"" + xmlEsc(minVersion) + "\" minJavaVersion=\"" + xmlEsc(minJavaVersion) + "\">\n"
+	str += "<i2p:version>" + xmlEsc(version) + "</i2p:version>"
 	str += "<i2p:update type=\"su3\">"
-	str += "<i2p:torrent href=\"" + magnet + "\"/>"
+	str += "<i2p:torrent href=\"" + xmlEsc(magnet) + "\"/>"
 	for i, u := range urlSlice {
 		us, ok := u.(string)
 		if !ok {
 			return "", fmt.Errorf("JSONtoXML: updates.su3.url[%d] is not a string", i)
 		}
-		str += "<i2p:url href=\"" + us + "\"/>"
+		str += "<i2p:url href=\"" + xmlEsc(us) + "\"/>"
 	}
 	str += "</i2p:update>"
 	str += "</i2p:release>"
@@ -137,8 +149,8 @@ func (nb *NewsBuilder) Build() (string, error) {
 	currentTime := time.Now().UTC()
 	str := "<?xml version='1.0' encoding='UTF-8'?>"
 	str += "<feed xmlns:i2p=\"http://geti2p.net/en/docs/spec/updates\" xmlns=\"http://www.w3.org/2005/Atom\" xml:lang=\"en\">"
-	str += "<id>" + "urn:uuid:" + nb.URNID + "</id>"
-	str += "<title>" + nb.TITLE + "</title>"
+	str += "<id>" + "urn:uuid:" + xmlEsc(nb.URNID) + "</id>"
+	str += "<title>" + xmlEsc(nb.TITLE) + "</title>"
 	milli := currentTime.Nanosecond() / 1_000_000
 	// No trailing newline: the \n was previously injected into the element text,
 	// causing RFC-3339 parsers and strict Atom validators to reject the timestamp.
@@ -146,14 +158,14 @@ func (nb *NewsBuilder) Build() (string, error) {
 		currentTime.Year(), currentTime.Month(), currentTime.Day(),
 		currentTime.Hour(), currentTime.Minute(), currentTime.Second(), milli)
 	str += "<updated>" + t + "</updated>"
-	str += "<link href=\"" + nb.SITEURL + "\"/>"
-	str += "<link href=\"" + nb.MAINFEED + "\" rel=\"self\"/>"
+	str += "<link href=\"" + xmlEsc(nb.SITEURL) + "\"/>"
+	str += "<link href=\"" + xmlEsc(nb.MAINFEED) + "\" rel=\"self\"/>"
 	if nb.BACKUPFEED != "" {
-		str += "<link href=\"" + nb.BACKUPFEED + "\" rel=\"alternate\"/>"
+		str += "<link href=\"" + xmlEsc(nb.BACKUPFEED) + "\" rel=\"alternate\"/>"
 	}
 	str += "<generator uri=\"http://idk.i2p/newsgo\" version=\"0.1.0\">newsgo</generator>"
-	str += "<subtitle>" + nb.SUBTITLE + "</subtitle>"
-	blocklistBytes, err := ioutil.ReadFile(nb.BlocklistXML)
+	str += "<subtitle>" + xmlEsc(nb.SUBTITLE) + "</subtitle>"
+	blocklistBytes, err := os.ReadFile(nb.BlocklistXML)
 	if err != nil {
 		return "", err
 	}
