@@ -45,6 +45,9 @@ Use these options to configure the software
  - `--feedbackup`: Backup newsfeed for updates to pass to news generator
  - `--feeduri`: UUID to use for the RSS feed to pass to news generator
  - `--builddir`: directory to output XML files in
+ - `--platform`: restrict build to one OS target (`linux`|`mac`|`mac-arm64`|`win`|`android`|`ios`); omit to build all platforms
+ - `--status`: restrict build to one release channel (`stable`|`beta`|`rc`|`alpha`); omit to build all channels
+ - `--translationsdir`: directory containing `entries.{locale}.html` translation files; defaults to the `translations` subdirectory of `--newsfile`
 
 #### Signer Options(use with `sign`)
 

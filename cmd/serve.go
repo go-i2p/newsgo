@@ -51,11 +51,13 @@ var serveCmd = &cobra.Command{
 		}
 		if c.I2P {
 			go func() {
-				// Same rationale: SAM session or garlic listener failures are
-				// operational events (slow SAM startup, missing gateway) that
-				// should produce a clean log line rather than a panic trace.
+				// Use Printf (not Fatalf): I2P auto-detection is best-effort.
+				// A false-positive port match or a transient SAM startup failure
+				// should degrade gracefully rather than pulling down the clearnet
+				// listener alongside it.  The operator can pass --i2p=false
+				// explicitly if auto-detection fires on a non-SAM process.
 				if err := serveI2P(s, c.SamAddr); err != nil {
-					log.Fatalf("serveI2P: %v", err)
+					log.Printf("serveI2P: %v (I2P listener disabled)", err)
 				}
 			}()
 		}
@@ -101,17 +103,34 @@ func init() {
 	viper.BindPFlags(serveCmd.Flags())
 }
 
-// isSamAround probes 127.0.0.1:7656 to check whether a SAMv3 gateway is
-// running.  Returns true when the port is already bound (SAM is present).
-// Must only be called after flag.Parse / inside a command handler — never at
-// package-init time — to avoid blocking syscalls for unrelated sub-commands.
+// isSamAround probes the default SAMv3 address to check whether a gateway is
+// running.  Returns true when something accepts a TCP connection on the port.
+//
+// Implementation note: we use Dial rather than Listen.  Listen would fail
+// whenever *any* process has the port open — true SAM present, or an unrelated
+// service.  Dial only succeeds when a listener is actually accepting connections,
+// which is a closer proxy for "SAM is ready".  The probe remains best-effort:
+// a non-SAM process on port 7656 still returns true, but the I2P goroutine
+// handles that failure gracefully (see caller in serveCmd.Run).
+//
+// Must only be called inside a command handler — never at package-init time —
+// to avoid blocking syscalls for unrelated sub-commands (build, sign, help).
 func isSamAround() bool {
-	ln, err := net.Listen("tcp", "127.0.0.1:7656")
+	return checkPortListening("127.0.0.1:7656")
+}
+
+// checkPortListening dials addr with a short timeout and returns true when a
+// listener accepts the connection.  Extracted from isSamAround for testability
+// so unit tests can bind their own listener on a random port instead of
+// requiring port 7656 to be free (or occupied by SAM).
+func checkPortListening(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 	if err != nil {
-		return true
+		// Connection refused, timeout, or network error → nothing listening.
+		return false
 	}
-	ln.Close()
-	return false
+	conn.Close()
+	return true
 }
 
 // noListenerConfigured reports whether the serve command would start with zero

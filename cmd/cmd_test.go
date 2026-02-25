@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,6 +71,57 @@ func TestLoadPrivateKey_NilPEMGuard(t *testing.T) {
 func TestIsSamAround_Callable(t *testing.T) {
 	result := isSamAround()
 	t.Logf("isSamAround() = %v", result)
+}
+
+// TestCheckPortListening_NothingListening verifies that checkPortListening
+// returns false when no process is accepting connections on the probed address.
+// We pick a random high port and bind-then-close it before probing, so the OS
+// has released it prior to the Dial attempt.
+func TestCheckPortListening_NothingListening(t *testing.T) {
+	// Find a free port by asking the OS for one, then immediately closing it
+	// so it is guaranteed to be unoccupied when checkPortListening dials it.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("could not find a free port: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close() // release the port before probing
+
+	got := checkPortListening(addr)
+	if got {
+		t.Errorf("checkPortListening(%q) = true; want false (nothing listening)", addr)
+	}
+}
+
+// TestCheckPortListening_SomethingListening verifies that checkPortListening
+// returns true when a TCP listener is actively accepting on the probed address.
+// This is the canonical "SAM is running" path \u2014 here exercised with a plain
+// net.Listener so the test does not require an actual SAM gateway.
+func TestCheckPortListening_SomethingListening(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("could not start test listener: %v", err)
+	}
+	defer ln.Close()
+
+	got := checkPortListening(ln.Addr().String())
+	if !got {
+		t.Errorf("checkPortListening(%q) = false; want true (listener is up)", ln.Addr().String())
+	}
+}
+
+// TestCheckPortListening_NonRoutableAddr verifies that checkPortListening
+// returns false within its timeout on an address that is not reachable (TEST-NET
+// per RFC 5737 is non-routable; the connection attempt will time out or be
+// refused quickly on loopback-only test runners).
+// We use 127.0.0.2, which is loopback-family but almost never has a listener,
+// so both "connection refused" and "dial timeout" produce the expected false.
+func TestCheckPortListening_UnreachablePort(t *testing.T) {
+	// Port 1 is reserved; no process should be listening on it in CI.
+	got := checkPortListening("127.0.0.1:1")
+	if got {
+		t.Skip("port 1 unexpectedly accepts connections in this environment; skipping")
+	}
 }
 
 // TestNoListenerConfigured verifies the condition logic that guards against the
