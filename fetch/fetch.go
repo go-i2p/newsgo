@@ -118,6 +118,22 @@ func (f *Fetcher) Fetch(url string) ([]byte, error) {
 // su3Magic is the 6-byte file identity prefix all valid su3 files start with.
 const su3Magic = "I2Psu3"
 
+// verifySignatureAgainstCerts checks whether the cryptographic signature of f
+// is valid under at least one of the trusted X.509 certificates in certs.
+// It returns nil on the first successful match, or a wrapped error if no
+// certificate verifies the signature.
+func verifySignatureAgainstCerts(f *su3.File, certs []*x509.Certificate) error {
+	var lastErr error
+	for _, c := range certs {
+		if err := f.VerifySignature(c); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("newsfetch: signature verification failed: %w", lastErr)
+}
+
 // VerifyAndUnpack parses the raw su3 bytes, optionally verifies the signature
 // against one of the provided trusted X.509 certificates, and returns the
 // inner content bytes (the Atom XML payload).
@@ -133,22 +149,11 @@ func VerifyAndUnpack(data []byte, certs []*x509.Certificate) ([]byte, error) {
 	if err := f.UnmarshalBinary(data); err != nil {
 		return nil, fmt.Errorf("newsfetch: unmarshal su3: %w", err)
 	}
-
 	if len(certs) > 0 {
-		var lastErr error
-		for _, c := range certs {
-			if err := f.VerifySignature(c); err == nil {
-				lastErr = nil
-				break
-			} else {
-				lastErr = err
-			}
-		}
-		if lastErr != nil {
-			return nil, fmt.Errorf("newsfetch: signature verification failed: %w", lastErr)
+		if err := verifySignatureAgainstCerts(f, certs); err != nil {
+			return nil, err
 		}
 	}
-
 	return f.Content, nil
 }
 
@@ -163,6 +168,29 @@ func (f *Fetcher) FetchAndParse(url string, certs []*x509.Certificate) ([]byte, 
 	return VerifyAndUnpack(data, certs)
 }
 
+// parseCertificatesFromPEM scans raw for PEM blocks of type "CERTIFICATE",
+// parses each one into an *x509.Certificate, and returns the collected slice.
+// path is included in error messages solely for context.
+func parseCertificatesFromPEM(raw []byte, path string) ([]*x509.Certificate, error) {
+	var certs []*x509.Certificate
+	for len(raw) > 0 {
+		var block *pem.Block
+		block, raw = pem.Decode(raw)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("newsfetch: parse cert in %s: %w", path, err)
+		}
+		certs = append(certs, c)
+	}
+	return certs, nil
+}
+
 // LoadCertificates reads PEM-encoded X.509 certificates from a set of file
 // paths and returns the parsed certificate pool.  Files may contain multiple
 // PEM blocks.  At least one valid certificate must be found in the combined
@@ -174,21 +202,11 @@ func LoadCertificates(paths []string) ([]*x509.Certificate, error) {
 		if err != nil {
 			return nil, fmt.Errorf("newsfetch: read cert file %s: %w", path, err)
 		}
-		for len(raw) > 0 {
-			var block *pem.Block
-			block, raw = pem.Decode(raw)
-			if block == nil {
-				break
-			}
-			if block.Type != "CERTIFICATE" {
-				continue
-			}
-			c, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				return nil, fmt.Errorf("newsfetch: parse cert in %s: %w", path, err)
-			}
-			certs = append(certs, c)
+		parsed, err := parseCertificatesFromPEM(raw, path)
+		if err != nil {
+			return nil, err
 		}
+		certs = append(certs, parsed...)
 	}
 	if len(certs) == 0 {
 		return nil, fmt.Errorf("newsfetch: no valid certificates found in %v", paths)
