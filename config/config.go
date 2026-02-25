@@ -38,10 +38,14 @@ type Conf struct {
 	FeedBackup      string `mapstructure:"feedbackup"`
 	// FeedUuid is populated from the --feeduri flag (matches README).
 	// Without this tag viper would look for the key "feeduuid".
-	FeedUuid   string `mapstructure:"feeduri"`
-	BuildDir   string `mapstructure:"builddir"`
-	SignerId   string `mapstructure:"signerid"`
-	SigningKey string `mapstructure:"signingkey"`
+	FeedUuid string `mapstructure:"feeduri"`
+	BuildDir string `mapstructure:"builddir"`
+	// TranslationsDir is the directory searched for "entries.{locale}.html"
+	// translation files.  When empty the build command defaults to the
+	// "translations" subdirectory of the newsfile directory.
+	TranslationsDir string `mapstructure:"translationsdir"`
+	SignerId        string `mapstructure:"signerid"`
+	SigningKey      string `mapstructure:"signingkey"`
 
 	// Fetch subcommand options.
 

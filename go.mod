@@ -12,6 +12,8 @@ require (
 	github.com/wcharczuk/go-chart/v2 v2.1.2
 	github.com/yosssi/gohtml v0.0.0-20201013000340-ee4748c638f4
 	gitlab.com/golang-commonmark/markdown v0.0.0-20211110145824-bf3e522c626a
+	golang.org/x/net v0.41.0
+	golang.org/x/text v0.28.0
 	i2pgit.org/go-i2p/reseed-tools v0.3.11
 )
 
@@ -40,7 +42,5 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.39.0 // indirect
 	golang.org/x/image v0.18.0 // indirect
-	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
 )

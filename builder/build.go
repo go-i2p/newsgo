@@ -20,6 +20,7 @@ import (
 // XML metadata emitted in the feed header and release element.
 type NewsBuilder struct {
 	Feed         newsfeed.Feed
+	Language     string // BCP 47 tag, e.g. "de", "zh-TW"; defaults to "en" when empty
 	ReleasesJson string
 	BlocklistXML string
 	URNID        string
@@ -231,9 +232,17 @@ func validateBlocklistXML(content []byte) error {
 // buildFeedHeader constructs the Atom feed XML preamble for the given
 // NewsBuilder and timestamp. It emits the XML declaration, <feed> opening tag,
 // id, title, updated timestamp, link elements, generator, and subtitle.
+//
+// The xml:lang attribute is set from nb.Language; it defaults to "en" when
+// nb.Language is empty to preserve backward-compatible output for callers that
+// construct NewsBuilder directly without setting the Language field.
 func buildFeedHeader(nb *NewsBuilder, currentTime time.Time) string {
+	lang := nb.Language
+	if lang == "" {
+		lang = "en"
+	}
 	str := "<?xml version='1.0' encoding='UTF-8'?>"
-	str += "<feed xmlns:i2p=\"http://geti2p.net/en/docs/spec/updates\" xmlns=\"http://www.w3.org/2005/Atom\" xml:lang=\"en\">"
+	str += "<feed xmlns:i2p=\"http://geti2p.net/en/docs/spec/updates\" xmlns=\"http://www.w3.org/2005/Atom\" xml:lang=\"" + xmlEsc(lang) + "\">"
 	str += "<id>" + "urn:uuid:" + xmlEsc(nb.URNID) + "</id>"
 	str += "<title>" + xmlEsc(nb.TITLE) + "</title>"
 	milli := currentTime.Nanosecond() / 1_000_000

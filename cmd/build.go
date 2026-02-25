@@ -27,22 +27,24 @@ var buildCmd = &cobra.Command{
 			log.Fatalf("build: stat %s: %v", c.NewsFile, e)
 		}
 		if f.IsDir() {
-			err := filepath.Walk(c.NewsFile,
-				func(path string, info os.FileInfo, err error) error {
-					if err != nil {
-						return err
-					}
-					// Only process files named "entries.html".  Filtering by
-					// extension alone would cause index.html, error pages, and
-					// other co-located HTML files to be parsed as Atom entry
-					// sources, producing spurious or malformed output feeds.
-					if filepath.Base(path) == "entries.html" {
-						build(path)
-					}
-					return nil
-				})
-			if err != nil {
-				log.Println(err)
+			// Always build the canonical English feed first.
+			canonicaPath := filepath.Join(c.NewsFile, "entries.html")
+			if _, err := os.Stat(canonicaPath); err == nil {
+				build(canonicaPath)
+			}
+
+			// Resolve the translations directory: use the explicit flag value
+			// when set, otherwise fall back to the "translations" subdirectory
+			// next to the canonical entries file.
+			transDir := c.TranslationsDir
+			if transDir == "" {
+				transDir = filepath.Join(c.NewsFile, "translations")
+			}
+
+			// Auto-detect every entries.{locale}.html file in the translations
+			// directory and build a feed for each one.
+			for _, translationFile := range builder.DetectTranslationFiles(transDir) {
+				build(translationFile)
 			}
 		} else {
 			build(c.NewsFile)
@@ -67,6 +69,7 @@ func init() {
 	// config.Conf.FeedUuid carries the mapstructure:"feeduri" tag.
 	buildCmd.Flags().String("feeduri", "", "UUID to use for the RSS feed to pass to news generator. Random if omitted")
 	buildCmd.Flags().String("builddir", "build", "Build directory to output feeds to")
+	buildCmd.Flags().String("translationsdir", "", "Directory containing entries.{locale}.html translation files. Defaults to the 'translations' subdirectory of --newsfile when omitted")
 	// Note: samaddr is registered on serveCmd inside cmd/serve.go; do NOT
 	// re-register it here — pflag panics on duplicate flag definitions.
 
@@ -85,6 +88,10 @@ func defaultFeedURL() string {
 
 func build(newsFile string) {
 	news := builder.Builder(newsFile, c.ReleaseJsonFile, c.BlockList)
+	// Set the BCP 47 language tag derived from the source filename so that
+	// each translated feed carries the correct xml:lang attribute.
+	// LocaleFromPath returns "en" for the canonical entries.html.
+	news.Language = builder.LocaleFromPath(newsFile)
 	news.TITLE = c.FeedTitle
 	news.SITEURL = c.FeedSite
 	news.MAINFEED = c.FeedMain

@@ -509,6 +509,232 @@ func TestBuild_EmptyBlocklistPath(t *testing.T) {
 	}
 }
 
+// --- LocaleFromPath tests ---
+
+// TestLocaleFromPath covers all 35 locale variants present in i2p.newsxml,
+// the canonical English source, and several edge cases.
+func TestLocaleFromPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want string
+	}{
+		// Canonical English — no locale segment.
+		{"data/entries.html", "en"},
+		// Bare filename, no directory prefix.
+		{"entries.html", "en"},
+		// Simple two-letter tags.
+		{"data/translations/entries.ar.html", "ar"},
+		{"data/translations/entries.az.html", "az"},
+		{"data/translations/entries.cs.html", "cs"},
+		{"data/translations/entries.da.html", "da"},
+		{"data/translations/entries.de.html", "de"},
+		{"data/translations/entries.el.html", "el"},
+		{"data/translations/entries.es.html", "es"},
+		{"data/translations/entries.fa.html", "fa"},
+		{"data/translations/entries.fi.html", "fi"},
+		{"data/translations/entries.fr.html", "fr"},
+		{"data/translations/entries.gl.html", "gl"},
+		{"data/translations/entries.he.html", "he"},
+		{"data/translations/entries.hu.html", "hu"},
+		{"data/translations/entries.id.html", "id"},
+		{"data/translations/entries.it.html", "it"},
+		{"data/translations/entries.ja.html", "ja"},
+		{"data/translations/entries.ko.html", "ko"},
+		{"data/translations/entries.nb.html", "nb"},
+		{"data/translations/entries.nl.html", "nl"},
+		{"data/translations/entries.pl.html", "pl"},
+		{"data/translations/entries.pt.html", "pt"},
+		{"data/translations/entries.ro.html", "ro"},
+		{"data/translations/entries.ru.html", "ru"},
+		{"data/translations/entries.sv.html", "sv"},
+		{"data/translations/entries.tk.html", "tk"},
+		{"data/translations/entries.tr.html", "tr"},
+		{"data/translations/entries.uk.html", "uk"},
+		{"data/translations/entries.vi.html", "vi"},
+		{"data/translations/entries.yo.html", "yo"},
+		{"data/translations/entries.zh.html", "zh"},
+		// Three-letter / script tags.
+		{"data/translations/entries.ast.html", "ast"},
+		{"data/translations/entries.gan.html", "gan"},
+		// Underscore-separated regional subtags — must normalise to hyphen form.
+		{"data/translations/entries.es_AR.html", "es-AR"},
+		{"data/translations/entries.pt_BR.html", "pt-BR"},
+		{"data/translations/entries.zh_TW.html", "zh-TW"},
+		// Edge: path contains no directory component.
+		{"entries.de.html", "de"},
+		// Edge: non-entries HTML file must return "en" (no locale segment).
+		{"data/index.html", "en"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			got := LocaleFromPath(tc.path)
+			if got == "" {
+				t.Errorf("LocaleFromPath(%q) returned empty string; want %q", tc.path, tc.want)
+			}
+			if got != tc.want {
+				t.Errorf("LocaleFromPath(%q) = %q; want %q", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLocaleFromPath_NoPanic verifies that LocaleFromPath does not panic for
+// any of the 34 known translation locale filenames.
+func TestLocaleFromPath_NoPanic(t *testing.T) {
+	locales := []string{
+		"ar", "ast", "az", "cs", "da", "de", "el", "es", "es_AR", "fa",
+		"fi", "fr", "gan", "gl", "he", "hu", "id", "it", "ja", "ko",
+		"nb", "nl", "pl", "pt", "pt_BR", "ro", "ru", "sv", "tk", "tr",
+		"uk", "vi", "yo", "zh", "zh_TW",
+	}
+	for _, loc := range locales {
+		path := "data/translations/entries." + loc + ".html"
+		got := LocaleFromPath(path)
+		if got == "" {
+			t.Errorf("LocaleFromPath(%q) must not return empty string", path)
+		}
+		if got == "en" {
+			t.Errorf("LocaleFromPath(%q) returned \"en\" for a known translation locale", path)
+		}
+	}
+}
+
+// --- DetectTranslationFiles tests ---
+
+// TestDetectTranslationFiles_Empty verifies that a non-existent or empty
+// directory returns nil without panicking.
+func TestDetectTranslationFiles_Empty(t *testing.T) {
+	dir := t.TempDir()
+	if got := DetectTranslationFiles(filepath.Join(dir, "nonexistent")); got != nil {
+		t.Errorf("expected nil for missing dir; got %v", got)
+	}
+	if got := DetectTranslationFiles(dir); got != nil {
+		t.Errorf("expected nil for empty dir; got %v", got)
+	}
+}
+
+// TestDetectTranslationFiles_Discovers verifies that only "entries.{locale}.html"
+// files are returned and that other HTML files are ignored.
+func TestDetectTranslationFiles_Discovers(t *testing.T) {
+	dir := t.TempDir()
+	keep := []string{"entries.de.html", "entries.pt_BR.html", "entries.zh_TW.html"}
+	skip := []string{"index.html", "entries.html", "README.md", "entries.md"}
+	for _, name := range append(keep, skip...) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(""), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := DetectTranslationFiles(dir)
+	if len(got) != len(keep) {
+		t.Fatalf("expected %d files; got %d: %v", len(keep), len(got), got)
+	}
+	byBase := make(map[string]bool)
+	for _, p := range got {
+		byBase[filepath.Base(p)] = true
+	}
+	for _, name := range keep {
+		if !byBase[name] {
+			t.Errorf("expected %q in results; got %v", name, got)
+		}
+	}
+	for _, name := range skip {
+		if byBase[name] {
+			t.Errorf("unexpected file %q in results", name)
+		}
+	}
+}
+
+// TestDetectTranslationFiles_SubdirsIgnored verifies that subdirectories
+// inside the translations dir are not returned as translation files.
+func TestDetectTranslationFiles_SubdirsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	// A subdirectory named like a translation file must be ignored.
+	if err := os.Mkdir(filepath.Join(dir, "entries.de.html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "entries.fr.html"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := DetectTranslationFiles(dir)
+	if len(got) != 1 || filepath.Base(got[0]) != "entries.fr.html" {
+		t.Errorf("expected only entries.fr.html; got %v", got)
+	}
+}
+
+// --- xml:lang end-to-end tests ---
+
+// TestBuild_DefaultLanguageIsEnglish verifies that a NewsBuilder constructed
+// without setting Language emits xml:lang="en" in the feed header, preserving
+// backward compatibility for callers that construct NewsBuilder directly.
+func TestBuild_DefaultLanguageIsEnglish(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	// Language field is intentionally left at its zero value.
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	if !strings.Contains(feed, `xml:lang="en"`) {
+		t.Errorf(`expected xml:lang="en" in feed header; got feed snippet: %s`,
+			excerptAround(feed, "xml:lang"))
+	}
+}
+
+// TestBuild_LanguageFieldPropagatedToHeader verifies that setting Language on
+// NewsBuilder results in the correct xml:lang attribute value in the feed.
+func TestBuild_LanguageFieldPropagatedToHeader(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	nb.Language = "de"
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	if !strings.Contains(feed, `xml:lang="de"`) {
+		t.Errorf(`expected xml:lang="de"; feed snippet: %s`,
+			excerptAround(feed, "xml:lang"))
+	}
+}
+
+// TestBuild_RegionalLocaleInHeader verifies that a regional BCP 47 tag
+// (e.g. "pt-BR") round-trips correctly through the feed header.
+func TestBuild_RegionalLocaleInHeader(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	nb.Language = "pt-BR"
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	if !strings.Contains(feed, `xml:lang="pt-BR"`) {
+		t.Errorf(`expected xml:lang="pt-BR"; feed snippet: %s`,
+			excerptAround(feed, "xml:lang"))
+	}
+}
+
+// TestBuild_XmlLangAttributeIsWellFormedXML verifies that an xml:lang value
+// containing a hyphen (regional subtag) does not break XML well-formedness.
+func TestBuild_XmlLangAttributeIsWellFormedXML(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	nb.Language = "zh-TW"
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	dec := xml.NewDecoder(strings.NewReader(feed))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("feed with xml:lang=\"zh-TW\" is not well-formed XML: %v", err)
+			break
+		}
+	}
+}
+
 // TestBuild_MalformedBlocklist verifies that Build() returns an error when the
 // blocklist file contains broken XML instead of silently producing an invalid feed.
 func TestBuild_MalformedBlocklist(t *testing.T) {

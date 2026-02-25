@@ -26,6 +26,10 @@ func xmlEsc(s string) string {
 // Feed parses an HTML entries file and exposes its <article> elements as
 // individual Article values for use by NewsBuilder.
 type Feed struct {
+	// Locale is the BCP 47 language tag for this feed (e.g. "de", "zh-TW").
+	// It is set by the caller and used for observability; Feed itself does not
+	// alter its parsing behaviour based on this field.
+	Locale              string
 	HeaderTitle         string
 	ArticlesSet         []string
 	EntriesHTMLPath     string
