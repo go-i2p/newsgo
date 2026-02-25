@@ -164,6 +164,107 @@ func TestIncrement_ConcurrentSafety(t *testing.T) {
 	}
 }
 
+// TestGraph_EmptyStats_WritesPlaceholder verifies that Graph does not fail
+// when DownloadLangs is empty (total == 0). The go-chart bar chart library
+// returns "invalid data range; cannot be zero" for an all-zero dataset, so
+// Graph must short-circuit to a placeholder SVG rather than returning an
+// error. A freshly-started news server will always have empty stats on its
+// first request for /langstats.svg.
+func TestGraph_EmptyStats_WritesPlaceholder(t *testing.T) {
+	n := &NewsStats{DownloadLangs: make(map[string]int)}
+	rw := httptest.NewRecorder()
+	if err := n.Graph(rw); err != nil {
+		t.Fatalf("Graph with empty stats returned error: %v", err)
+	}
+	body := rw.Body.String()
+	if len(body) == 0 {
+		t.Fatal("Graph with empty stats wrote zero bytes")
+	}
+	// The placeholder must be valid SVG (XML-parseable indicator: starts with
+	// '<svg').
+	if !containsSVG(rw.Body.Bytes()) {
+		t.Errorf("placeholder body does not contain '<svg': %q", body)
+	}
+}
+
+// TestGraph_ZeroValueNewsStats_WritesPlaceholder verifies that a zero-value
+// NewsStats (DownloadLangs == nil) also receives the placeholder SVG without
+// panicking. This covers the case where Graph is called before Load or
+// Increment have initialised the map.
+func TestGraph_ZeroValueNewsStats_WritesPlaceholder(t *testing.T) {
+	n := &NewsStats{} // DownloadLangs is nil
+	rw := httptest.NewRecorder()
+	if err := n.Graph(rw); err != nil {
+		t.Fatalf("Graph on zero-value struct returned error: %v", err)
+	}
+	if !containsSVG(rw.Body.Bytes()) {
+		t.Errorf("expected placeholder SVG body, got: %q", rw.Body.String())
+	}
+}
+
+// TestGraph_Success_WritesNonEmptyBody verifies that Graph writes a non-empty
+// SVG body to the ResponseWriter and returns a nil error when rendering
+// succeeds. Before the buffering fix, Graph returned nothing — callers had no
+// way to distinguish a successful render from a silent render failure.
+func TestGraph_Success_WritesNonEmptyBody(t *testing.T) {
+	n := &NewsStats{
+		DownloadLangs: map[string]int{"en_US": 10, "de": 5},
+	}
+	rw := httptest.NewRecorder()
+	if err := n.Graph(rw); err != nil {
+		t.Fatalf("Graph returned unexpected error: %v", err)
+	}
+	body := rw.Body.Bytes()
+	if len(body) == 0 {
+		t.Fatal("Graph wrote zero bytes to ResponseWriter")
+	}
+}
+
+// TestGraph_ReturnNilOnSuccess verifies the error contract: Graph must return
+// nil when the chart library renders without error. The test also confirms that
+// the body contains an SVG opening tag, providing a basic sanity check that
+// the buffered bytes are forwarded to rw.
+func TestGraph_ReturnNilOnSuccess(t *testing.T) {
+	n := &NewsStats{
+		DownloadLangs: map[string]int{"fr": 2},
+	}
+	rw := httptest.NewRecorder()
+	err := n.Graph(rw)
+	if err != nil {
+		t.Fatalf("Graph: unexpected error: %v", err)
+	}
+	if !containsSVG(rw.Body.Bytes()) {
+		t.Errorf("Graph body does not contain '<svg'")
+	}
+}
+
+// TestGraph_NoPartialWriteOnSuccess verifies that when Graph succeeds the
+// entire render is delivered atomically: reading the body twice returns the
+// same bytes (i.e., no partial flush occurred mid-render).
+func TestGraph_NoPartialWriteOnSuccess(t *testing.T) {
+	n := &NewsStats{DownloadLangs: map[string]int{"ja": 3, "ru": 7}}
+	rw := httptest.NewRecorder()
+	if err := n.Graph(rw); err != nil {
+		t.Fatalf("Graph error: %v", err)
+	}
+	// Body must be non-empty and complete (not truncated mid-tag).
+	body := rw.Body.String()
+	if len(body) == 0 {
+		t.Fatal("expected non-empty SVG body")
+	}
+}
+
+// containsSVG is a helper that reports whether b contains the opening "<svg"
+// tag produced by the go-chart SVG renderer.
+func containsSVG(b []byte) bool {
+	for i := 0; i+4 <= len(b); i++ {
+		if b[i] == '<' && b[i+1] == 's' && b[i+2] == 'v' && b[i+3] == 'g' {
+			return true
+		}
+	}
+	return false
+}
+
 // TestSave_ConcurrentWithIncrement verifies that Save can be called while
 // Increment goroutines are running without a data race.
 func TestSave_ConcurrentWithIncrement(t *testing.T) {

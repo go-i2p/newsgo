@@ -670,6 +670,85 @@ func TestOpenDirectory_ListingIncludesChecksum(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// fileType MIME fallback (AUDIT.md: "fileType() returns text/html for
+// unrecognised extensions")
+// ---------------------------------------------------------------------------
+
+// TestFileType_UnknownExtension_OctetStream verifies that a completely unknown
+// file extension is served as application/octet-stream rather than the
+// misleading text/html that the old default produced.  A browser that receives
+// text/html for a binary file will attempt to render it as markup, corrupting
+// the download.
+func TestFileType_UnknownExtension_OctetStream(t *testing.T) {
+	got, err := fileType("archive.xyzunknownext")
+	if err != nil {
+		t.Fatalf("fileType: unexpected error: %v", err)
+	}
+	if got == "text/html" {
+		t.Errorf("fileType for unknown extension returned %q; must not return text/html", got)
+	}
+	if got != "application/octet-stream" {
+		t.Errorf("fileType for unknown extension = %q, want application/octet-stream", got)
+	}
+}
+
+// TestFileType_CSS_NotHTML verifies that .css files receive a CSS Content-Type
+// (from Go's built-in MIME database) and not text/html.  The go standard
+// library's mime package includes text/css; charset=utf-8 for .css regardless
+// of the operating system, so this assertion is portable.
+func TestFileType_CSS_NotHTML(t *testing.T) {
+	got, err := fileType("style.css")
+	if err != nil {
+		t.Fatalf("fileType: unexpected error: %v", err)
+	}
+	if got == "text/html" {
+		t.Errorf("fileType(.css) = %q; must not return text/html", got)
+	}
+	if !strings.Contains(got, "text/css") {
+		t.Errorf("fileType(.css) = %q; expected to contain text/css", got)
+	}
+}
+
+// TestFileType_JSON_NotHTML verifies that .json files receive
+// application/json and not text/html.
+func TestFileType_JSON_NotHTML(t *testing.T) {
+	got, err := fileType("data.json")
+	if err != nil {
+		t.Fatalf("fileType: unexpected error: %v", err)
+	}
+	if got == "text/html" {
+		t.Errorf("fileType(.json) = %q; must not return text/html", got)
+	}
+}
+
+// TestServeHTTP_CSSFile_ContentType verifies the end-to-end behaviour: a .css
+// file present in NewsDir is served with a Content-Type that does not contain
+// text/html.  Browsers that receive text/html for a stylesheet ignore it
+// entirely rather than applying the rules.
+func TestServeHTTP_CSSFile_ContentType(t *testing.T) {
+	dir := t.TempDir()
+	cssContent := []byte("body { color: red; }")
+	if err := os.WriteFile(filepath.Join(dir, "style.css"), cssContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+	rw := httptest.NewRecorder()
+	rq := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	s.ServeHTTP(rw, rq)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rw.Code)
+	}
+	ct := rw.Header().Get("Content-Type")
+	if ct == "text/html" {
+		t.Errorf("CSS file served with Content-Type text/html; want text/css")
+	}
+	if !strings.Contains(ct, "text/css") {
+		t.Errorf("CSS Content-Type = %q; expected to contain text/css", ct)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // statsForTest constructs a NewsStats suitable for use in tests. It
 // initialises DownloadLangs directly rather than calling Load so that
 // the embedded sync.RWMutex is never used before the value is returned.

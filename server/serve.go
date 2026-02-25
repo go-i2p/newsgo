@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -157,7 +158,14 @@ func fileType(file string) (string, error) {
 	case ".svg":
 		return "image/svg+xml", nil
 	default:
-		return "text/html", nil
+		// Consult the OS / Go built-in MIME type database before falling back
+		// to application/octet-stream. This ensures that CSS, JS, PNG and
+		// other common files are served with the correct Content-Type instead
+		// of the misleading text/html that the old default emitted.
+		if t := mime.TypeByExtension(extension); t != "" {
+			return t, nil
+		}
+		return "application/octet-stream", nil
 	}
 }
 
@@ -325,7 +333,15 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 	// An actual .svg file on disk (e.g. a logo) should be served as a
 	// static file through the normal path below.
 	if filepath.Base(file) == statsGraphFilename {
-		n.Stats.Graph(rw)
+		// Graph buffers the render internally; it only writes to rw when
+		// rendering succeeds, so a failure here means no bytes have been
+		// committed yet and we can safely send an HTTP 500 response.
+		if err := n.Stats.Graph(rw); err != nil {
+			log.Printf("ServeFile: stats graph render failed: %v", err)
+			rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			rw.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintln(rw, "Internal Server Error")
+		}
 		return nil
 	}
 	// Check whether the path is a directory. The os.Stat error must not be

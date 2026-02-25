@@ -3,7 +3,9 @@
 package newsstats
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -23,7 +25,11 @@ type NewsStats struct {
 }
 
 // Graph renders a bar chart of per-language download counts as SVG into rw.
-func (n *NewsStats) Graph(rw http.ResponseWriter) {
+// It buffers the entire SVG into memory before writing to rw so that a render
+// failure does not commit a partial or empty body with a 200 status code.
+// The caller is responsible for writing an appropriate error response when a
+// non-nil error is returned; at that point no bytes have been written to rw.
+func (n *NewsStats) Graph(rw http.ResponseWriter) error {
 	n.mu.RLock()
 	bars := []chart.Value{
 		{Value: float64(0), Label: "baseline"},
@@ -38,6 +44,18 @@ func (n *NewsStats) Graph(rw http.ResponseWriter) {
 	n.mu.RUnlock()
 	bars = append(bars, chart.Value{Value: float64(total), Label: "Total Requests / Approx. Updates Handled"})
 
+	// go-chart fails with "invalid data range; cannot be zero" when every bar
+	// value is 0 (i.e. no downloads have been recorded yet).  Return a minimal
+	// valid SVG placeholder so the stats page renders correctly on a
+	// freshly-started server rather than propagating an error.
+	if total == 0 {
+		const noDataSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="256">` +
+			`<text x="200" y="128" text-anchor="middle" font-size="16">No download data yet</text>` +
+			`</svg>`
+		_, err := fmt.Fprint(rw, noDataSVG)
+		return err
+	}
+
 	graph := chart.BarChart{
 		Title: "Downloads by language",
 		Background: chart.Style{
@@ -51,10 +69,15 @@ func (n *NewsStats) Graph(rw http.ResponseWriter) {
 		BarWidth: 20,
 		Bars:     bars,
 	}
-	err := graph.Render(chart.SVG, rw)
-	if err != nil {
-		log.Println("Graph: error", err)
+	// Render into an in-memory buffer. Only copy to rw when rendering
+	// succeeds so that a failure cannot produce a 200 OK with a partial
+	// or empty SVG body.
+	var buf bytes.Buffer
+	if err := graph.Render(chart.SVG, &buf); err != nil {
+		return fmt.Errorf("Graph: render: %w", err)
 	}
+	_, err := rw.Write(buf.Bytes())
+	return err
 }
 
 // Increment records one su3 download. The lang query parameter selects the
