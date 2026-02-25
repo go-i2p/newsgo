@@ -139,6 +139,46 @@ func (nb *NewsBuilder) JSONtoXML() (string, error) {
 	return str, nil
 }
 
+// validateBlocklistXML checks that content is a valid XML fragment suitable
+// for embedding directly inside the <feed> element.  Two conditions are
+// rejected:
+//
+//  1. A leading XML declaration (<?xml …?>).  The outer feed document already
+//     carries one; two XML declarations in the same byte stream are forbidden
+//     by the XML specification (§2.8).
+//
+//  2. Content that is not well-formed XML.  Broken fragments propagate
+//     silently to every downstream consumer (feed readers, the su3 packager).
+//
+// An empty blocklist is allowed and produces no fragment in the output feed.
+func validateBlocklistXML(content []byte) error {
+	if len(content) == 0 {
+		return nil
+	}
+	// Reject an embedded XML declaration before attempting to parse, since the
+	// declaration is valid XML on its own but illegal inside a larger document.
+	if bytes.HasPrefix(bytes.TrimSpace(content), []byte("<?xml")) {
+		return fmt.Errorf("validateBlocklistXML: blocklist must not contain an XML declaration")
+	}
+	// Wrap in a namespace-aware root element so the XML decoder sees a single
+	// well-formed document.  The i2p namespace prefix is declared here because
+	// blocklist fragments commonly use <i2p:blocklist> and similar elements;
+	// without the declaration the xml.Decoder would report an unbound prefix.
+	wrapped := append([]byte(`<_root xmlns:i2p="http://geti2p.net/en/docs/spec/updates">`), content...)
+	wrapped = append(wrapped, []byte(`</_root>`)...)
+	dec := xml.NewDecoder(bytes.NewReader(wrapped))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("validateBlocklistXML: malformed XML fragment: %w", err)
+		}
+	}
+	return nil
+}
+
 func (nb *NewsBuilder) Build() (string, error) {
 	if err := nb.Feed.LoadHTML(); err != nil {
 		return "", fmt.Errorf("Build: error %s", err.Error())
@@ -168,6 +208,11 @@ func (nb *NewsBuilder) Build() (string, error) {
 	blocklistBytes, err := os.ReadFile(nb.BlocklistXML)
 	if err != nil {
 		return "", err
+	}
+	// Validate before splicing: a blocklist with an XML declaration or broken
+	// markup would silently corrupt the output feed and every .su3 built from it.
+	if err := validateBlocklistXML(blocklistBytes); err != nil {
+		return "", fmt.Errorf("Build: %w", err)
 	}
 	str += string(blocklistBytes)
 	jsonxml, err := nb.JSONtoXML()

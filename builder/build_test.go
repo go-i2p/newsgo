@@ -394,3 +394,117 @@ func TestJSONtoXML_XMLEscapingInURLs(t *testing.T) {
 		t.Errorf("bare & in torrent href not escaped")
 	}
 }
+
+// --- validateBlocklistXML / blocklist validation tests ---
+
+// TestValidateBlocklistXML_Empty verifies that an empty blocklist is accepted
+// without error.  This is the most common production case.
+func TestValidateBlocklistXML_Empty(t *testing.T) {
+	if err := validateBlocklistXML([]byte("")); err != nil {
+		t.Errorf("empty blocklist: unexpected error: %v", err)
+	}
+}
+
+// TestValidateBlocklistXML_ValidFragment verifies that a well-formed XML
+// fragment with no declaration is accepted.
+func TestValidateBlocklistXML_ValidFragment(t *testing.T) {
+	fragment := []byte(`<i2p:blocklist xmlns:i2p="http://geti2p.net/en/docs/spec/updates"><i2p:block host="bad.i2p"/></i2p:blocklist>`)
+	if err := validateBlocklistXML(fragment); err != nil {
+		t.Errorf("valid fragment: unexpected error: %v", err)
+	}
+}
+
+// TestValidateBlocklistXML_XMLDeclaration verifies that a blocklist starting
+// with an XML declaration is rejected.  Two XML declarations in one document
+// are forbidden by the XML specification.
+func TestValidateBlocklistXML_XMLDeclaration(t *testing.T) {
+	withDecl := []byte(`<?xml version='1.0'?><i2p:blocklist xmlns:i2p="http://geti2p.net/en/docs/spec/updates"/>`)
+	err := validateBlocklistXML(withDecl)
+	if err == nil {
+		t.Fatal("expected error for blocklist with XML declaration, got nil")
+	}
+	if !strings.Contains(err.Error(), "declaration") {
+		t.Errorf("error should mention declaration; got: %v", err)
+	}
+}
+
+// TestValidateBlocklistXML_MalformedXML verifies that a blocklist with broken
+// XML markup is rejected with a descriptive error rather than silently spliced.
+func TestValidateBlocklistXML_MalformedXML(t *testing.T) {
+	malformed := []byte(`<i2p:blocklist><unclosed`)
+	err := validateBlocklistXML(malformed)
+	if err == nil {
+		t.Fatal("expected error for malformed XML blocklist, got nil")
+	}
+}
+
+// TestValidateBlocklistXML_UnclosedElement verifies that an unclosed element
+// (which would corrupt the feed document tree) is rejected.
+func TestValidateBlocklistXML_UnclosedElement(t *testing.T) {
+	unclosed := []byte(`<i2p:blocklist xmlns:i2p="http://example.com">`)
+	err := validateBlocklistXML(unclosed)
+	if err == nil {
+		t.Fatal("expected error for unclosed element, got nil")
+	}
+}
+
+// TestBuild_BlocklistWithDeclaration verifies that Build() returns an error
+// (not a corrupted feed) when the blocklist file contains an XML declaration.
+func TestBuild_BlocklistWithDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	// Overwrite the blocklist with a declaration-bearing file.
+	bad := `<?xml version='1.0'?><i2p:blocklist xmlns:i2p="http://geti2p.net/en/docs/spec/updates"/>`
+	if err := os.WriteFile(nb.BlocklistXML, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := nb.Build()
+	if err == nil {
+		t.Fatal("expected Build() to return error for blocklist with XML declaration, got nil")
+	}
+}
+
+// TestBuild_MalformedBlocklist verifies that Build() returns an error when the
+// blocklist file contains broken XML instead of silently producing an invalid feed.
+func TestBuild_MalformedBlocklist(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	if err := os.WriteFile(nb.BlocklistXML, []byte("<broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := nb.Build()
+	if err == nil {
+		t.Fatal("expected Build() to return error for malformed blocklist, got nil")
+	}
+}
+
+// TestBuild_ValidBlocklistFragment verifies that a well-formed blocklist
+// fragment without an XML declaration is accepted and appears in the feed.
+func TestBuild_ValidBlocklistFragment(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	fragment := `<i2p:blocklist xmlns:i2p="http://geti2p.net/en/docs/spec/updates"><i2p:block host="evil.i2p"/></i2p:blocklist>`
+	if err := os.WriteFile(nb.BlocklistXML, []byte(fragment), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build() with valid blocklist fragment: %v", err)
+	}
+	// The fragment content must appear in the output.
+	if !strings.Contains(feed, "evil.i2p") {
+		t.Errorf("blocklist content not present in feed output")
+	}
+	// The overall feed must still be well-formed XML.
+	dec := xml.NewDecoder(strings.NewReader(feed))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("feed with blocklist fragment is not well-formed XML: %v", err)
+			break
+		}
+	}
+}
