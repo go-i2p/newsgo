@@ -1,6 +1,8 @@
 package newsserver
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,35 @@ func TestOpenDirectory_MissingDir(t *testing.T) {
 	_, err := openDirectory("/nonexistent/directory/path")
 	if err == nil {
 		t.Fatal("expected error for missing directory, got nil")
+	}
+}
+
+// TestFileChecksum_Consistent verifies that fileChecksum produces the correct
+// SHA-256 hex digest without reading the full file into memory at once.  The
+// expected value is computed independently using crypto/sha256.Sum256.
+func TestFileChecksum_Consistent(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("hello, newsgo")
+	path := filepath.Join(dir, "test.xml")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256(content))
+	got, err := fileChecksum(path)
+	if err != nil {
+		t.Fatalf("fileChecksum: %v", err)
+	}
+	if got != want {
+		t.Errorf("fileChecksum = %q, want %q", got, want)
+	}
+}
+
+// TestFileChecksum_Missing verifies fileChecksum returns an error for a
+// non-existent path instead of panicking or returning an empty string.
+func TestFileChecksum_Missing(t *testing.T) {
+	_, err := fileChecksum("/nonexistent/path/to/file.xml")
+	if err == nil {
+		t.Fatal("expected error for missing file, got nil")
 	}
 }
 

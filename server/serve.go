@@ -3,7 +3,7 @@ package newsserver
 import (
 	"crypto/sha256"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -72,11 +72,28 @@ func fileType(file string) (string, error) {
 	}
 }
 
+// fileChecksum computes a SHA-256 checksum for the file at path by streaming
+// its contents through a hash.Hash.  Reading in chunks avoids allocating the
+// entire file content into memory, which matters for large .su3 files that
+// can be several megabytes each and are present in every directory listing.
+func fileChecksum(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("fileChecksum: open %s: %w", path, err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("fileChecksum: hash %s: %w", path, err)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
 // openDirectory returns a Markdown directory listing for wd. It returns an
 // error rather than calling log.Fatal so that callers inside HTTP handlers
 // can surface a proper HTTP error response instead of killing the process.
 func openDirectory(wd string) (string, error) {
-	files, err := ioutil.ReadDir(wd)
+	files, err := os.ReadDir(wd)
 	if err != nil {
 		return "", fmt.Errorf("openDirectory: %w", err)
 	}
@@ -90,21 +107,29 @@ func openDirectory(wd string) (string, error) {
 	readme += fmt.Sprintf("%s\n", "")
 	readme += fmt.Sprintf("%s\n", "**Directory Listing:**")
 	readme += fmt.Sprintf("%s\n", "")
-	for _, file := range files {
-		if !file.IsDir() {
+	for _, entry := range files {
+		info, err := entry.Info()
+		if err != nil {
+			log.Println("Listing: stat error:", err)
+			continue
+		}
+		if !entry.IsDir() {
 			// Use log.Println so this output goes through the same log
 			// destination as all other server messages (timestamped, etc.).
-			log.Println(file.Name(), file.IsDir())
-			xname := filepath.Join(wd, file.Name())
-			bytes, err := ioutil.ReadFile(xname)
+			log.Println(entry.Name(), entry.IsDir())
+			xname := filepath.Join(wd, entry.Name())
+			// Stream the file through sha256 rather than reading it fully
+			// into memory.  This avoids large per-request allocations when
+			// the build directory contains multi-megabyte .su3 files.
+			sum, err := fileChecksum(xname)
 			if err != nil {
 				log.Println("Listing error:", err)
+				sum = "(checksum unavailable)"
 			}
-			sum := fmt.Sprintf("%x", sha256.Sum256(bytes))
-			readme += fmt.Sprintf(" - [%s](%s/%s) : `%d` : `%s` - `%s`\n", file.Name(), filepath.Base(nwd), filepath.Base(file.Name()), file.Size(), file.Mode(), sum)
+			readme += fmt.Sprintf(" - [%s](%s/%s) : `%d` : `%s` - `%s`\n", entry.Name(), filepath.Base(nwd), filepath.Base(entry.Name()), info.Size(), info.Mode(), sum)
 		} else {
-			log.Println(file.Name(), file.IsDir())
-			readme += fmt.Sprintf(" - [%s](%s/) : `%d` : `%s`\n", file.Name(), file.Name(), file.Size(), file.Mode())
+			log.Println(entry.Name(), entry.IsDir())
+			readme += fmt.Sprintf(" - [%s](%s/) : `%d` : `%s`\n", entry.Name(), entry.Name(), info.Size(), info.Mode())
 		}
 	}
 	return readme, nil
@@ -152,7 +177,7 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 		rw.Write(hTML(content))
 		return nil
 	}
-	bytes, err := ioutil.ReadFile(file)
+	bytes, err := os.ReadFile(file)
 	if err != nil {
 		return fmt.Errorf("ServeFile: %s", err)
 	}
