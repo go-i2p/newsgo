@@ -29,7 +29,7 @@ var signCmd = &cobra.Command{
 		// unchanged and the source file is overwritten with binary su3 data.
 		f, e := os.Stat(c.BuildDir)
 		if e != nil {
-			panic(e)
+			log.Fatalf("sign: stat %s: %v", c.BuildDir, e)
 		}
 		if f.IsDir() {
 			err := filepath.Walk(c.BuildDir,

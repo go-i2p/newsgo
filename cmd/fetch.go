@@ -134,8 +134,6 @@ func fetchURLs(f *newsfetch.Fetcher, urls []string, certs []*x509.Certificate, o
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
 		log.Printf("fetch: saved %d bytes to %s", len(content), outPath)
-		// Print to stdout so piping / scripting is easy.
-		fmt.Printf("%s\n", content)
 		return nil
 	}
 	return fmt.Errorf("all URLs failed: %s", strings.Join(errs, "; "))

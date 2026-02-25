@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -249,4 +250,54 @@ func TestNewFetcherFromGarlic_Pipeline(t *testing.T) {
 	if string(got) != string(want) {
 		t.Fatalf("content mismatch: got %q, want %q", got, want)
 	}
+}
+
+// TestNewFetcherFromClient_Pipeline verifies that NewFetcherFromClient produces
+// a working Fetcher when given a plain *http.Client, exercising the constructor
+// added for test injection.
+func TestNewFetcherFromClient_Pipeline(t *testing.T) {
+	want := []byte("<feed>from-client</feed>")
+	su3Data, _, _ := makeSu3Bytes(t, want)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(su3Data)
+	}))
+	defer ts.Close()
+
+	f := NewFetcherFromClient(ts.Client())
+	got, err := f.FetchAndParse(ts.URL, nil)
+	if err != nil {
+		t.Fatalf("FetchAndParse: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("content mismatch: got %q, want %q", got, want)
+	}
+}
+
+// TestCloseSharedGarlic_Idempotent verifies that calling CloseSharedGarlic when
+// no session was ever initialised is a no-op (does not panic), and that multiple
+// sequential calls are safe.
+func TestCloseSharedGarlic_Idempotent(t *testing.T) {
+	// These calls should be safe regardless of package-level state: if
+	// sharedGarlic is nil (never initialised in this process up to this point,
+	// or already closed by a prior test), the function must return silently.
+	CloseSharedGarlic()
+	CloseSharedGarlic()
+}
+
+// TestCloseSharedGarlic_Concurrent races concurrent CloseSharedGarlic calls
+// against each other to confirm that garlicMu prevents a data race on the
+// sharedGarlic pointer.  Run with "go test -race ./fetch/..." to exercise the
+// race detector.
+func TestCloseSharedGarlic_Concurrent(t *testing.T) {
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			CloseSharedGarlic()
+		}()
+	}
+	wg.Wait()
 }

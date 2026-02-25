@@ -1,13 +1,26 @@
 package cmd
 
 import (
+	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"io"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	newsfetch "github.com/go-i2p/newsgo/fetch"
 	"github.com/go-i2p/onramp"
 	"github.com/spf13/viper"
+	"i2pgit.org/go-i2p/reseed-tools/su3"
 )
 
 // TestLoadPrivateKey_NilPEMGuard verifies that loadPrivateKey returns a
@@ -183,5 +196,91 @@ func TestInitConfig_NewsgoEnvPrefix(t *testing.T) {
 	if got != "9999" {
 		t.Errorf("viper.GetString(\"port\") = %q; want \"9999\" — "+
 			"NEWSGO_PORT is not being read (bare PORT=%q would give %q)", got, "1111", "1111")
+	}
+}
+
+// makeSu3ForCmd builds a minimal signed su3 payload for use in cmd-level tests.
+// It is intentionally self-contained so that cmd tests do not depend on the
+// internal helpers of package newsfetch.
+func makeSu3ForCmd(t *testing.T, content []byte) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("makeSu3ForCmd: generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "cmd-test-signer@example.i2p"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("makeSu3ForCmd: create cert: %v", err)
+	}
+	_ = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	f := su3.New()
+	f.FileType = su3.FileTypeXML
+	f.ContentType = su3.ContentTypeNews
+	f.Content = content
+	f.SignerID = []byte("cmd-test-signer@example.i2p")
+	if err := f.Sign(key); err != nil {
+		t.Fatalf("makeSu3ForCmd: sign: %v", err)
+	}
+	data, err := f.MarshalBinary()
+	if err != nil {
+		t.Fatalf("makeSu3ForCmd: marshal: %v", err)
+	}
+	return data
+}
+
+// TestFetchURLs_NoStdout verifies that a successful fetchURLs call writes the
+// Atom XML content ONLY to --outdir and produces zero bytes on stdout.
+//
+// Before the fix, fetchURLs unconditionally called fmt.Printf("%s\n", content)
+// on every successful fetch, dumping the full XML body to stdout regardless of
+// whether the caller wanted it there.  This test would have failed before the
+// fix and must pass after it.
+func TestFetchURLs_NoStdout(t *testing.T) {
+	payload := []byte("<feed>no-stdout-test</feed>")
+	su3Data := makeSu3ForCmd(t, payload)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-i2p-su3-news")
+		w.WriteHeader(http.StatusOK)
+		w.Write(su3Data)
+	}))
+	defer ts.Close()
+
+	outDir := t.TempDir()
+	// Serve the su3 under a path that outFilename will recognise as "news.su3".
+	url := ts.URL + "/news.su3"
+
+	// Redirect os.Stdout to a pipe so we can capture anything written there.
+	origStdout := os.Stdout
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = pw
+
+	f := newsfetch.NewFetcherFromClient(ts.Client())
+	fetchErr := fetchURLs(f, []string{url}, nil, outDir)
+
+	// Restore stdout before any assertions so test output is not swallowed.
+	pw.Close()
+	os.Stdout = origStdout
+
+	var captured bytes.Buffer
+	io.Copy(&captured, pr)
+	pr.Close()
+
+	if fetchErr != nil {
+		t.Fatalf("fetchURLs returned unexpected error: %v", fetchErr)
+	}
+	if captured.Len() != 0 {
+		t.Errorf("fetchURLs wrote %d bytes to stdout; want 0\ncaptured: %s",
+			captured.Len(), captured.String())
 	}
 }

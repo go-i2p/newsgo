@@ -24,7 +24,7 @@ var buildCmd = &cobra.Command{
 
 		f, e := os.Stat(c.NewsFile)
 		if e != nil {
-			panic(e)
+			log.Fatalf("build: stat %s: %v", c.NewsFile, e)
 		}
 		if f.IsDir() {
 			err := filepath.Walk(c.NewsFile,
@@ -116,10 +116,10 @@ func build(newsFile string) {
 		// path, silently overwriting all but the last feed.
 		filename := outputFilename(newsFile, c.NewsFile)
 		if err := os.MkdirAll(filepath.Join(c.BuildDir, filepath.Dir(filename)), 0o755); err != nil {
-			panic(err)
+			log.Fatalf("build: mkdir %s: %v", filepath.Join(c.BuildDir, filepath.Dir(filename)), err)
 		}
 		if err = os.WriteFile(filepath.Join(c.BuildDir, filename), []byte(feed), 0o644); err != nil {
-			panic(err)
+			log.Fatalf("build: write %s: %v", filepath.Join(c.BuildDir, filename), err)
 		}
 	}
 }

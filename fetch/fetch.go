@@ -21,8 +21,11 @@ import (
 )
 
 // garlicOnce guards the creation of the shared Garlic session.
+// garlicMu protects reads and writes of sharedGarlic from concurrent
+// goroutines that bypass the sync.Once protocol (e.g. CloseSharedGarlic).
 var (
 	garlicOnce   sync.Once
+	garlicMu     sync.Mutex
 	sharedGarlic *onramp.Garlic
 	garlicErr    error
 )
@@ -32,21 +35,33 @@ var (
 // used.  Should be called before the first Fetcher is constructed.
 func initSharedGarlic(samAddr string) (*onramp.Garlic, error) {
 	garlicOnce.Do(func() {
+		var g *onramp.Garlic
+		var err error
 		if samAddr != "" {
-			sharedGarlic, garlicErr = onramp.NewGarlic("newsgo", samAddr, onramp.OPT_DEFAULTS)
+			g, err = onramp.NewGarlic("newsgo", samAddr, onramp.OPT_DEFAULTS)
 		} else {
-			sharedGarlic = &onramp.Garlic{}
+			g = &onramp.Garlic{}
 		}
+		garlicMu.Lock()
+		sharedGarlic, garlicErr = g, err
+		garlicMu.Unlock()
 	})
+	garlicMu.Lock()
+	defer garlicMu.Unlock()
 	return sharedGarlic, garlicErr
 }
 
 // CloseSharedGarlic closes the package-level Garlic session.  Call this once
 // all Fetchers are no longer needed (e.g. in a defer after the fetch command
 // completes).  It is safe to call even if the session was never opened.
+// Concurrent calls with NewFetcher / initSharedGarlic are safe; sharedGarlic
+// is always accessed under garlicMu.
 func CloseSharedGarlic() {
+	garlicMu.Lock()
+	defer garlicMu.Unlock()
 	if sharedGarlic != nil {
 		sharedGarlic.Close()
+		sharedGarlic = nil // prevent double-close
 	}
 }
 
@@ -94,6 +109,14 @@ func NewFetcherFromGarlic(g *onramp.Garlic) *Fetcher {
 			Timeout:   5 * time.Minute,
 		},
 	}
+}
+
+// NewFetcherFromClient returns a Fetcher that uses the provided *http.Client
+// directly.  This constructor is intended for testing: callers can pass an
+// *httptest.Server's client to route requests to a local test server without
+// opening a real I2P connection.
+func NewFetcherFromClient(c *http.Client) *Fetcher {
+	return &Fetcher{client: c}
 }
 
 // Fetch performs an HTTP GET of url over I2P and returns the raw response body.
