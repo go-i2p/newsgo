@@ -72,6 +72,31 @@ func TestIsSamAround_Callable(t *testing.T) {
 	t.Logf("isSamAround() = %v", result)
 }
 
+// TestNoListenerConfigured verifies the condition logic that guards against the
+// serve command spinning in an infinite loop without any active listener.
+// When host is non-empty or i2p is true, at least one listener will start and
+// the guard must NOT fire.  Only when both are false/empty should it fire.
+func TestNoListenerConfigured(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		i2p  bool
+		want bool
+	}{
+		{"both disabled — no listener", "", false, true},
+		{"clearnet only — listener present", "127.0.0.1", false, false},
+		{"i2p only — listener present", "", true, false},
+		{"both enabled — listeners present", "127.0.0.1", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := noListenerConfigured(tt.host, tt.i2p); got != tt.want {
+				t.Errorf("noListenerConfigured(%q, %v) = %v, want %v", tt.host, tt.i2p, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestOutputFilename validates that build output paths are computed relative to
 // the walk root so that source-directory components (e.g. "data/") are not
 // propagated into BuildDir.

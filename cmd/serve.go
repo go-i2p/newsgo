@@ -31,6 +31,13 @@ var serveCmd = &cobra.Command{
 			c.I2P = isSamAround()
 		}
 
+		// Fail fast rather than spinning forever with no listeners.
+		// The default for --host is "127.0.0.1" (never empty), so this
+		// condition only fires on deliberate misconfiguration.
+		if noListenerConfigured(c.Host, c.I2P) {
+			log.Fatalf("serve: no listener configured: --host is empty and --i2p is false; at least one must be enabled")
+		}
+
 		if c.Host != "" {
 			go func() {
 				// log.Fatalf produces a human-readable message and exits
@@ -105,6 +112,15 @@ func isSamAround() bool {
 	}
 	ln.Close()
 	return false
+}
+
+// noListenerConfigured reports whether the serve command would start with zero
+// active listeners. It is extracted as a named function so the condition can
+// be unit-tested without invoking log.Fatalf. Returns true only when host is
+// the empty string (--host "") AND i2p is false — both clearnet and I2P
+// listeners are disabled simultaneously.
+func noListenerConfigured(host string, i2p bool) bool {
+	return host == "" && !i2p
 }
 
 // serveHTTP starts an HTTP listener on host:port and serves s.

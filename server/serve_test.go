@@ -1,6 +1,7 @@
 package newsserver
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
@@ -241,6 +242,86 @@ func TestOpenDirectory_FileLinksAreRelative(t *testing.T) {
 	}
 	if strings.Contains(listing, "de/news.atom.xml") {
 		t.Errorf("link href must not contain directory prefix 'de/'; got doubled path in listing:\n%s", listing)
+	}
+}
+
+// TestFileCheck_LangStats_NoStatRequired verifies that fileCheck returns nil
+// for langstats.svg even when no file with that name exists on disk.  The
+// stats SVG is generated on-demand by Stats.Graph and is never written to the
+// news directory, so it must bypass the os.Stat existence check.
+func TestFileCheck_LangStats_NoStatRequired(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, statsGraphFilename) // does NOT exist on disk
+	if err := fileCheck(path); err != nil {
+		t.Errorf("fileCheck(%q): expected nil for stats graph path, got %v", path, err)
+	}
+}
+
+// TestFileCheck_ArbitrarySVG_Missing verifies that fileCheck returns a non-nil
+// error for a *.svg path that is neither the stats graph filename nor present
+// on disk.  Before the fix every *.svg path bypassed os.Stat, so a fabricated
+// URL like /secret.svg always returned nil here, leading to an HTTP 200.
+func TestFileCheck_ArbitrarySVG_Missing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret.svg") // does NOT exist on disk
+	if err := fileCheck(path); err == nil {
+		t.Errorf("fileCheck(%q): expected error for missing arbitrary .svg, got nil", path)
+	}
+}
+
+// TestServeHTTP_ArbitrarySVG_Returns404 verifies that an HTTP request for a
+// *.svg URL that does not match langstats.svg and has no corresponding file on
+// disk receives HTTP 404 instead of the stats bar chart.
+func TestServeHTTP_ArbitrarySVG_Returns404(t *testing.T) {
+	dir := t.TempDir()
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+	for _, name := range []string{"secret.svg", "nonexistent.svg", "logo.svg"} {
+		rw := httptest.NewRecorder()
+		rq := httptest.NewRequest(http.MethodGet, "/"+name, nil)
+		s.ServeHTTP(rw, rq)
+		if rw.Code != http.StatusNotFound {
+			t.Errorf("GET /%s: expected 404, got %d", name, rw.Code)
+		}
+	}
+}
+
+// TestServeHTTP_LangStatsSVG_Returns200 verifies that a request for the
+// canonical langstats.svg path returns HTTP 200 with an SVG body served by
+// Stats.Graph, even though langstats.svg is never written to NewsDir.
+func TestServeHTTP_LangStatsSVG_Returns200(t *testing.T) {
+	dir := t.TempDir()
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+	rw := httptest.NewRecorder()
+	rq := httptest.NewRequest(http.MethodGet, "/"+statsGraphFilename, nil)
+	s.ServeHTTP(rw, rq)
+	if rw.Code != http.StatusOK {
+		t.Errorf("GET /langstats.svg: expected 200, got %d", rw.Code)
+	}
+	ct := rw.Header().Get("Content-Type")
+	if !strings.Contains(ct, "image/svg+xml") {
+		t.Errorf("GET /langstats.svg: expected Content-Type image/svg+xml, got %q", ct)
+	}
+}
+
+// TestServeHTTP_ExistingSVGFile_Served verifies that a real *.svg file present
+// on disk is served as a static file (not hijacked by Stats.Graph) when its
+// name is not langstats.svg.
+func TestServeHTTP_ExistingSVGFile_Served(t *testing.T) {
+	dir := t.TempDir()
+	svgContent := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>`)
+	svgFile := filepath.Join(dir, "logo.svg")
+	if err := os.WriteFile(svgFile, svgContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+	rw := httptest.NewRecorder()
+	rq := httptest.NewRequest(http.MethodGet, "/logo.svg", nil)
+	s.ServeHTTP(rw, rq)
+	if rw.Code != http.StatusOK {
+		t.Errorf("GET /logo.svg: expected 200, got %d", rw.Code)
+	}
+	if !bytes.Equal(rw.Body.Bytes(), svgContent) {
+		t.Errorf("GET /logo.svg: body mismatch\ngot:  %q\nwant: %q", rw.Body.Bytes(), svgContent)
 	}
 }
 

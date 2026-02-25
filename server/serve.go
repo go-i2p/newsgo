@@ -16,6 +16,14 @@ import (
 	"gitlab.com/golang-commonmark/markdown"
 )
 
+// statsGraphFilename is the canonical URL-path basename for the
+// dynamically-generated language-statistics SVG bar chart. This file is
+// never written to NewsDir — it is rendered on-demand by Stats.Graph — so
+// it is the only .svg path that legitimately bypasses the on-disk existence
+// check in fileCheck. All other *.svg requests go through os.Stat and
+// receive HTTP 404 if no matching file exists.
+const statsGraphFilename = "langstats.svg"
+
 // NewsServer is an http.Handler that serves news feed files from NewsDir and
 // records su3 download statistics via Stats.
 type NewsServer struct {
@@ -64,7 +72,10 @@ func (n *NewsServer) ServeHTTP(rw http.ResponseWriter, rq *http.Request) {
 }
 
 func fileCheck(file string) error {
-	if filepath.Ext(file) == ".svg" {
+	// statsGraphFilename is generated on-demand by Stats.Graph and never
+	// written to disk, so skip the existence check for that one name only.
+	// Every other *.svg path (and all other extensions) must pass os.Stat.
+	if filepath.Base(file) == statsGraphFilename {
 		return nil
 	}
 	if _, err := os.Stat(file); err != nil {
@@ -221,7 +232,10 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 		n.Stats.Increment(rq)
 	}
 	rw.Header().Add("Content-Type", ftype)
-	if ftype == "image/svg+xml" {
+	// Only the canonical stats-graph basename is rendered dynamically.
+	// An actual .svg file on disk (e.g. a logo) should be served as a
+	// static file through the normal path below.
+	if filepath.Base(file) == statsGraphFilename {
 		n.Stats.Graph(rw)
 		return nil
 	}
