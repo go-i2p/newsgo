@@ -58,6 +58,23 @@ func writeFixtures(t *testing.T, dir string) *NewsBuilder {
 	return nb
 }
 
+// TestBuilder_NoURNID verifies that Builder() does not pre-generate a UUID.
+// URNID must be set by the cmd layer (either from --feeduri or via a single
+// uuid.NewString() call), not inside the constructor.  If Builder() generated
+// a UUID, the cmd layer's subsequent assignment would silently discard it,
+// wasting an allocation and obscuring ownership of the value.
+func TestBuilder_NoURNID(t *testing.T) {
+	dir := t.TempDir()
+	nb := Builder(
+		filepath.Join(dir, "entries.html"),
+		filepath.Join(dir, "releases.json"),
+		filepath.Join(dir, "blocklist.xml"),
+	)
+	if nb.URNID != "" {
+		t.Errorf("Builder() URNID = %q; want empty string — UUID generation is the caller's responsibility", nb.URNID)
+	}
+}
+
 // --- JSONtoXML tests ---
 
 // TestJSONtoXML_ValidInput verifies that well-formed JSON produces the expected

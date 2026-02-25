@@ -11,7 +11,6 @@ import (
 	"time"
 
 	newsfeed "github.com/go-i2p/newsgo/builder/feed"
-	"github.com/google/uuid"
 	"github.com/yosssi/gohtml"
 )
 
@@ -315,6 +314,11 @@ func (nb *NewsBuilder) Build() (string, error) {
 // news feed.  newsFile is the path to the entries HTML source, releasesJson is
 // the path to the releases JSON file, and blocklistXML is the optional path to
 // an additional XML blocklist fragment (empty string disables it).
+//
+// URNID is intentionally left as the zero value (empty string) so that callers
+// own exactly one UUID-generation call.  Callers MUST set URNID before calling
+// Build(); the cmd layer handles this by honouring the --feeduri flag or
+// generating a fresh uuid.NewString() precisely once per feed.
 func Builder(newsFile, releasesJson, blocklistXML string) *NewsBuilder {
 	nb := &NewsBuilder{
 		Feed: newsfeed.Feed{
@@ -322,12 +326,12 @@ func Builder(newsFile, releasesJson, blocklistXML string) *NewsBuilder {
 		},
 		ReleasesJson: releasesJson,
 		BlocklistXML: blocklistXML,
-		URNID:        uuid.New().String(),
-		TITLE:        "I2P News",
-		SITEURL:      "http://i2p-projekt.i2p",
-		MAINFEED:     "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml",
-		BACKUPFEED:   "http://dn3tvalnjz432qkqsvpfdqrwpqkw3ye4n4i2uyfr4jexvo3sp5ka.b32.i2p/news/news.atom.xml",
-		SUBTITLE:     "News feed, and router updates",
+		// URNID is deliberately not set here; see function-level comment above.
+		TITLE:      "I2P News",
+		SITEURL:    "http://i2p-projekt.i2p",
+		MAINFEED:   "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml",
+		BACKUPFEED: "http://dn3tvalnjz432qkqsvpfdqrwpqkw3ye4n4i2uyfr4jexvo3sp5ka.b32.i2p/news/news.atom.xml",
+		SUBTITLE:   "News feed, and router updates",
 	}
 	return nb
 }

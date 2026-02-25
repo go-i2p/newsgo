@@ -6,16 +6,24 @@ import (
 )
 
 // TestKnownPlatforms verifies that KnownPlatforms returns the full canonical
-// set in a deterministic order with no duplicates.
+// set in a deterministic order with no duplicates, and that "linux" is NOT
+// included because it maps to the same data directory as the default ("") entry
+// and would produce redundant, overwriting build iterations.
 func TestKnownPlatforms(t *testing.T) {
 	got := KnownPlatforms()
-	want := []string{"linux", "mac", "mac-arm64", "win", "android", "ios"}
+	want := []string{"mac", "mac-arm64", "win", "android", "ios"}
 	if len(got) != len(want) {
 		t.Fatalf("KnownPlatforms() returned %d items; want %d: %v", len(got), len(want), got)
 	}
 	for i, p := range want {
 		if got[i] != p {
 			t.Errorf("KnownPlatforms()[%d] = %q; want %q", i, got[i], p)
+		}
+	}
+	// Explicitly confirm "linux" is absent — it is covered by the default ("") tree.
+	for _, p := range got {
+		if p == "linux" {
+			t.Error("KnownPlatforms() must not include \"linux\": it is an alias for the default tree and would cause duplicate builds")
 		}
 	}
 }
@@ -53,7 +61,11 @@ func TestPlatformDataDir(t *testing.T) {
 			want:     "data",
 		},
 		{
-			name:     "linux is an alias for the default tree",
+			// PlatformDataDir still accepts "linux" as a caller-supplied value for
+			// backward compatibility; it maps to the same top-level dataRoot so
+			// that explicit callers are not broken.  KnownPlatforms() no longer
+			// yields "linux" so the build loop never generates this pair itself.
+			name:     "linux maps to dataRoot for backward compat",
 			dataRoot: "data",
 			platform: "linux",
 			status:   "stable",

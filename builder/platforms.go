@@ -3,11 +3,14 @@ package newsbuilder
 
 import "path/filepath"
 
-// KnownPlatforms returns the canonical set of supported platform keys in a
-// deterministic order.  The empty string ("") represents the top-level
-// default (Linux) tree and is handled separately by callers.
+// KnownPlatforms returns the canonical set of non-default platform keys in a
+// deterministic order.  The Linux / default tree is represented by the empty
+// string ("") and is always added as a separate first entry by the build loop;
+// including "linux" here would cause an additional build pass that maps to the
+// identical top-level data directory, overwriting the default output with no
+// change in content.
 func KnownPlatforms() []string {
-	return []string{"linux", "mac", "mac-arm64", "win", "android", "ios"}
+	return []string{"mac", "mac-arm64", "win", "android", "ios"}
 }
 
 // KnownStatuses returns the canonical set of supported release-status keys in
