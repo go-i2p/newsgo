@@ -46,13 +46,20 @@ type Feed struct {
 // LoadHTML reads the HTML file at EntriesHTMLPath, extracts the <header> title
 // and all <article> elements into ArticlesSet. If BaseEntriesHTMLPath is also
 // set, that file is read and its articles are appended after the primary set.
+//
+// HeaderTitle is populated only when a <header> element is present; it is left
+// unchanged (empty string on first call) when the element is absent. soup's
+// Find() returns a Root with a non-nil Error when the element isn't found;
+// calling FullText() on such a Root would panic, so the Error is checked first.
 func (f *Feed) LoadHTML() error {
 	data, err := os.ReadFile(f.EntriesHTMLPath)
 	if err != nil {
 		return fmt.Errorf("LoadHTML: error %s", err)
 	}
 	f.doc = soup.HTMLParse(string(data))
-	f.HeaderTitle = f.doc.Find("header").FullText()
+	if headerEl := f.doc.Find("header"); headerEl.Error == nil {
+		f.HeaderTitle = headerEl.FullText()
+	}
 	articles := f.doc.FindAll("article")
 	for _, article := range articles {
 		f.ArticlesSet = append(f.ArticlesSet, article.HTML())
@@ -63,7 +70,9 @@ func (f *Feed) LoadHTML() error {
 			return fmt.Errorf("LoadHTML: error %s", err)
 		}
 		f.doc = soup.HTMLParse(string(data))
-		f.HeaderTitle = f.doc.Find("header").FullText()
+		if headerEl := f.doc.Find("header"); headerEl.Error == nil {
+			f.HeaderTitle = headerEl.FullText()
+		}
 		articles := f.doc.FindAll("article")
 		for _, article := range articles {
 			f.ArticlesSet = append(f.ArticlesSet, article.HTML())

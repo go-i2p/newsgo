@@ -245,3 +245,91 @@ func TestEntry_PlainValues(t *testing.T) {
 		t.Errorf("plain title not preserved in entry")
 	}
 }
+
+// --- HeaderTitle tests ---
+
+// TestLoadHTML_HeaderTitle verifies that LoadHTML populates HeaderTitle with
+// the text content of the <header> element. HeaderTitle is consumed by
+// buildFeedHeader in the builder package as a fallback Atom feed title when
+// NewsBuilder.TITLE is empty.
+func TestLoadHTML_HeaderTitle(t *testing.T) {
+	dir := t.TempDir()
+	entries := filepath.Join(dir, "entries.html")
+	html := `<html><body>
+<header>My Feed Title</header>
+<article id="1" title="A" href="http://example.com" author="B" published="2024-01-01" updated="2024-01-02">
+<details><summary>S</summary></details>
+<p>Body</p>
+</article>
+</body></html>`
+	if err := os.WriteFile(entries, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &Feed{EntriesHTMLPath: entries}
+	if err := f.LoadHTML(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(f.HeaderTitle, "My Feed Title") {
+		t.Errorf("LoadHTML() HeaderTitle = %q; want it to contain %q", f.HeaderTitle, "My Feed Title")
+	}
+}
+
+// TestLoadHTML_HeaderTitle_BaseFileOverwrites verifies that when
+// BaseEntriesHTMLPath is set, HeaderTitle is taken from the base file's
+// <header>, not the primary file's. This matches the documented behaviour in
+// LoadHTML: base articles are appended and the base header wins.
+func TestLoadHTML_HeaderTitle_BaseFileOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "entries.html")
+	base := filepath.Join(dir, "base.html")
+
+	primaryHTML := `<html><body>
+<header>Primary Title</header>
+<article id="1" title="A" href="http://example.com" author="B" published="2024-01-01" updated="2024-01-02">
+<details><summary>S</summary></details><p>Body</p>
+</article>
+</body></html>`
+	baseHTML := `<html><body>
+<header>Base Title</header>
+<article id="2" title="C" href="http://example.com/c" author="D" published="2024-02-01" updated="2024-02-02">
+<details><summary>T</summary></details><p>Base body</p>
+</article>
+</body></html>`
+
+	if err := os.WriteFile(primary, []byte(primaryHTML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base, []byte(baseHTML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &Feed{EntriesHTMLPath: primary, BaseEntriesHTMLPath: base}
+	if err := f.LoadHTML(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(f.HeaderTitle, "Base Title") {
+		t.Errorf("LoadHTML() HeaderTitle = %q; want it to contain \"Base Title\" (base overrides primary)", f.HeaderTitle)
+	}
+}
+
+// TestLoadHTML_HeaderTitle_NoHeaderElement verifies that LoadHTML does not
+// panic when the HTML file has no <header> element; HeaderTitle is an empty
+// string in that case.
+func TestLoadHTML_HeaderTitle_NoHeaderElement(t *testing.T) {
+	dir := t.TempDir()
+	entries := filepath.Join(dir, "entries.html")
+	html := `<html><body>
+<article id="1" title="A" href="http://example.com" author="B" published="2024-01-01" updated="2024-01-02">
+<details><summary>S</summary></details><p>Body</p>
+</article>
+</body></html>`
+	if err := os.WriteFile(entries, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &Feed{EntriesHTMLPath: entries}
+	if err := f.LoadHTML(); err != nil {
+		t.Fatalf("LoadHTML() should not error for HTML without <header>: %v", err)
+	}
+	// An absent <header> element results in an empty HeaderTitle; build can
+	// still fall back to NewsBuilder.TITLE.
+	_ = f.HeaderTitle // no assertion on value; absence of panic is the contract
+}

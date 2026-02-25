@@ -796,3 +796,150 @@ func TestBuild_ValidBlocklistFragment(t *testing.T) {
 		}
 	}
 }
+
+// --- Feed.HeaderTitle fallback tests ---
+
+// TestBuild_HeaderTitle_UsedAsFallback verifies that when NewsBuilder.TITLE is
+// empty the <title> element in the Atom feed is sourced from the <header>
+// element of the entries HTML file (Feed.HeaderTitle). This is the primary
+// consumer of the previously-dead HeaderTitle field.
+func TestBuild_HeaderTitle_UsedAsFallback(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	// Clear the explicit TITLE so the fallback path is exercised.
+	nb.TITLE = ""
+	// The entries.html fixture written by writeFixtures has
+	// <header>Test Feed</header>, which LoadHTML() stores in HeaderTitle.
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	// gohtml.Format may add whitespace inside elements; use a regexp that
+	// tolerates leading/trailing whitespace within <title>…</title>.
+	titleRe := regexp.MustCompile(`(?s)<title>\s*Test Feed\s*</title>`)
+	if !titleRe.MatchString(feed) {
+		t.Errorf("expected <title>Test Feed</title> from HTML header fallback; feed snippet:\n%s",
+			excerptAround(feed, "title"))
+	}
+}
+
+// TestBuild_HeaderTitle_ExplicitTitleWins verifies that when both TITLE and
+// Feed.HeaderTitle are non-empty, TITLE takes precedence.
+func TestBuild_HeaderTitle_ExplicitTitleWins(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	nb.TITLE = "Explicit Title"
+	// entries.html has <header>Test Feed</header>; that must not win.
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	// gohtml.Format may add whitespace inside elements; use a regexp that
+	// tolerates leading/trailing whitespace within <title>…</title>.
+	titleRe := regexp.MustCompile(`(?s)<title>\s*Explicit Title\s*</title>`)
+	if !titleRe.MatchString(feed) {
+		t.Errorf("expected <title>Explicit Title</title>; feed snippet:\n%s",
+			excerptAround(feed, "title"))
+	}
+	if strings.Contains(feed, "Test Feed") {
+		t.Errorf("HeaderTitle leaked into feed when TITLE was set; feed snippet:\n%s",
+			excerptAround(feed, "title"))
+	}
+}
+
+// TestBuild_HeaderTitle_BothEmpty verifies that when neither TITLE nor
+// HeaderTitle is set the <title> element is present but empty, producing
+// well-formed XML without panicking.
+func TestBuild_HeaderTitle_BothEmpty(t *testing.T) {
+	dir := t.TempDir()
+	// Write entries.html without a <header> element so HeaderTitle stays empty.
+	releasesPath := filepath.Join(dir, "releases.json")
+	blocklistPath := filepath.Join(dir, "blocklist.xml")
+	entriesPath := filepath.Join(dir, "entries.html")
+	if err := os.WriteFile(releasesPath, []byte(validReleasesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blocklistPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	html := `<html><body>
+<article id="urn:test:1" title="T" href="http://example.com"
+         author="A" published="2024-01-01" updated="2024-01-02">
+<details><summary>S</summary></details>
+<p>Body</p>
+</article>
+</body></html>`
+	if err := os.WriteFile(entriesPath, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := Builder(entriesPath, releasesPath, blocklistPath)
+	nb.URNID = "00000000-0000-0000-0000-000000000000"
+	nb.TITLE = "" // explicit clear
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	// <title></title> is still well-formed XML.
+	dec := xml.NewDecoder(strings.NewReader(feed))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("feed with empty title is not well-formed XML: %v", err)
+			break
+		}
+	}
+}
+
+// TestBuild_HeaderTitle_XMLEscaped verifies that a <header> containing
+// XML-special characters is escaped correctly in the Atom <title> element.
+func TestBuild_HeaderTitle_XMLEscaped(t *testing.T) {
+	dir := t.TempDir()
+	releasesPath := filepath.Join(dir, "releases.json")
+	blocklistPath := filepath.Join(dir, "blocklist.xml")
+	entriesPath := filepath.Join(dir, "entries.html")
+	if err := os.WriteFile(releasesPath, []byte(validReleasesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blocklistPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Header title contains & which must be escaped as &amp; in XML.
+	html := `<html><body>
+<header>News &amp; Updates</header>
+<article id="urn:test:1" title="T" href="http://example.com"
+         author="A" published="2024-01-01" updated="2024-01-02">
+<details><summary>S</summary></details>
+<p>Body</p>
+</article>
+</body></html>`
+	if err := os.WriteFile(entriesPath, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nb := Builder(entriesPath, releasesPath, blocklistPath)
+	nb.URNID = "00000000-0000-0000-0000-000000000000"
+	nb.TITLE = "" // use HeaderTitle fallback
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	// Bare & must not appear in the XML output.
+	if strings.Contains(feed, "News & Updates") {
+		t.Errorf("bare & in HeaderTitle not XML-escaped; feed snippet:\n%s",
+			excerptAround(feed, "title"))
+	}
+	// The output must still be well-formed XML.
+	dec := xml.NewDecoder(strings.NewReader(feed))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("feed with escaped HeaderTitle is not well-formed XML: %v\nfeed:\n%s", err, feed)
+			break
+		}
+	}
+}
