@@ -137,9 +137,15 @@ func build(newsFile string) {
 // source-directory sub-path inside BuildDir (e.g. "build/data/news.atom.xml"
 // instead of "build/news.atom.xml").  For single-file invocations where
 // newsFile == newsRoot, only the base name is used so the result is still valid.
+//
+// When newsFile is outside newsRoot (e.g. a custom --translationsdir that is
+// not a subdirectory of --newsfile), filepath.Rel returns a path with leading
+// ".." components.  In that case, and when the relative path cannot be
+// computed at all, the function falls back to the base name only so the output
+// always lands at the top level of BuildDir with the expected locale suffix.
 func outputFilename(newsFile, newsRoot string) string {
 	rel, err := filepath.Rel(newsRoot, newsFile)
-	if err != nil || rel == "." {
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
 		rel = filepath.Base(newsFile)
 	}
 	f := strings.Replace(rel, ".html", ".atom.xml", -1)
