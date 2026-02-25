@@ -1,3 +1,5 @@
+// Package newsserver provides an http.Handler that serves I2P news feed files
+// from a directory and tracks per-language su3 download statistics.
 package newsserver
 
 import (
@@ -14,6 +16,8 @@ import (
 	"gitlab.com/golang-commonmark/markdown"
 )
 
+// NewsServer is an http.Handler that serves news feed files from NewsDir and
+// records su3 download statistics via Stats.
 type NewsServer struct {
 	NewsDir string
 	Stats   stats.NewsStats
@@ -34,6 +38,8 @@ func containsPath(root, target string) bool {
 	return strings.HasPrefix(target, root+string(filepath.Separator))
 }
 
+// ServeHTTP implements http.Handler. It resolves the request URL path against
+// NewsDir, rejects path traversal attempts, and delegates to ServeFile.
 func (n *NewsServer) ServeHTTP(rw http.ResponseWriter, rq *http.Request) {
 	path := rq.URL.Path
 	file := filepath.Join(n.NewsDir, path)
@@ -192,7 +198,7 @@ func serveDirectory(file string, rw http.ResponseWriter) error {
 
 // serveStaticFile reads the regular file at path and writes its contents to rw,
 // logging the filename and resolved content-type.
-func serveStaticFile(file string, ftype string, rw http.ResponseWriter) error {
+func serveStaticFile(file, ftype string, rw http.ResponseWriter) error {
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return fmt.Errorf("ServeFile: %s", err)
@@ -202,6 +208,9 @@ func serveStaticFile(file string, ftype string, rw http.ResponseWriter) error {
 	return nil
 }
 
+// ServeFile determines the content type of file, increments su3 download
+// statistics when appropriate, writes the Content-Type header, and either
+// renders an HTML directory listing or streams the file contents to rw.
 func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWriter) error {
 	ftype, err := fileType(file)
 	if err != nil {
@@ -229,6 +238,9 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 	return serveStaticFile(file, ftype, rw)
 }
 
+// Serve constructs a NewsServer rooted at newsDir and loads any previously
+// persisted download statistics from newsStats. Both paths are stored on the
+// returned server; newsStats is also passed to stats.NewsStats.Load.
 func Serve(newsDir, newsStats string) *NewsServer {
 	s := &NewsServer{
 		NewsDir: newsDir,

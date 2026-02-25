@@ -1,3 +1,5 @@
+// Package newssigner wraps reseed-tools su3 signing to package Atom XML feeds
+// into signed su3 files for distribution via I2P news servers.
 package newssigner
 
 import (
@@ -9,11 +11,15 @@ import (
 	"i2pgit.org/go-i2p/reseed-tools/su3"
 )
 
+// NewsSigner signs Atom feed XML files and packages them into su3 files.
 type NewsSigner struct {
 	SignerID   string
 	SigningKey *rsa.PrivateKey
 }
 
+// CreateSu3 reads the Atom XML file at xmldata, wraps it in an su3 container
+// signed with ns.SigningKey, and writes the result to a file with the same
+// base name but the ".atom.xml" suffix replaced by ".su3".
 func (ns *NewsSigner) CreateSu3(xmldata string) error {
 	su3File := su3.New()
 	su3File.FileType = su3.FileTypeXML

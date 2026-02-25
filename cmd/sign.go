@@ -98,6 +98,9 @@ func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
 	return privKey, nil
 }
 
+// Sign loads the configured private key and signs the Atom XML feed at
+// xmlfeed, producing a co-located .su3 file. It returns any error encountered
+// during key loading or su3 creation.
 func Sign(xmlfeed string) error {
 	sk, err := loadPrivateKey(c.SigningKey)
 	if err != nil {

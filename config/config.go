@@ -1,3 +1,5 @@
+// Package config defines the Conf struct used by the cmd package to bind cobra
+// flags and viper configuration values into a single typed structure.
 package config
 
 // Conf holds the configuration values populated by viper from cobra flags,

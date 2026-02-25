@@ -1,3 +1,5 @@
+// Package newsstats tracks per-language su3 download counts and persists them
+// to a JSON file. All exported methods are safe for concurrent use.
 package newsstats
 
 import (

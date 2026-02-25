@@ -1,3 +1,5 @@
+// Package newsbuilder assembles I2P Atom news feed XML documents from HTML
+// entry sources, a release JSON descriptor, and an optional blocklist fragment.
 package newsbuilder
 
 import (
@@ -13,6 +15,9 @@ import (
 	"github.com/yosssi/gohtml"
 )
 
+// NewsBuilder holds the configuration required to assemble an I2P Atom news
+// feed. Feed provides the HTML entry source; the remaining fields control the
+// XML metadata emitted in the feed header and release element.
 type NewsBuilder struct {
 	Feed         newsfeed.Feed
 	ReleasesJson string
@@ -75,18 +80,18 @@ func parseReleasesJSON(path string) (map[string]interface{}, error) {
 func extractReleaseMetadata(release map[string]interface{}) (releasedate, version, minVersion, minJavaVersion string, err error) {
 	releasedate, err = jsonStr(release, "date")
 	if err != nil {
-		return
+		return releasedate, version, minVersion, minJavaVersion, err
 	}
 	version, err = jsonStr(release, "version")
 	if err != nil {
-		return
+		return releasedate, version, minVersion, minJavaVersion, err
 	}
 	minVersion, err = jsonStr(release, "minVersion")
 	if err != nil {
-		return
+		return releasedate, version, minVersion, minJavaVersion, err
 	}
 	minJavaVersion, err = jsonStr(release, "minJavaVersion")
-	return
+	return releasedate, version, minVersion, minJavaVersion, err
 }
 
 // navigateToSU3Map resolves the "updates"→"su3" path within a release JSON
@@ -118,11 +123,11 @@ func navigateToSU3Map(release map[string]interface{}) (map[string]interface{}, e
 func extractSU3Update(release map[string]interface{}) (magnet string, urlSlice []interface{}, err error) {
 	su3, err := navigateToSU3Map(release)
 	if err != nil {
-		return
+		return magnet, urlSlice, err
 	}
 	magnet, err = jsonStr(su3, "torrent")
 	if err != nil {
-		return
+		return magnet, urlSlice, err
 	}
 	urlsRaw, ok := su3["url"]
 	if !ok || urlsRaw == nil {
@@ -132,7 +137,7 @@ func extractSU3Update(release map[string]interface{}) (magnet string, urlSlice [
 	if !ok {
 		return "", nil, fmt.Errorf("JSONtoXML: field \"updates.su3.url\" is not an array")
 	}
-	return
+	return magnet, urlSlice, err
 }
 
 // buildReleaseXML assembles the <i2p:release> XML fragment from validated
@@ -262,6 +267,10 @@ func readBlocklistContent(path string) ([]byte, error) {
 	return data, nil
 }
 
+// Build assembles a complete Atom feed XML document from the loaded HTML
+// entries, blocklist, and release JSON, and returns it as a formatted string.
+// An error is returned if the HTML cannot be loaded, the blocklist is invalid,
+// or the release JSON cannot be parsed.
 func (nb *NewsBuilder) Build() (string, error) {
 	if err := nb.Feed.LoadHTML(); err != nil {
 		return "", fmt.Errorf("Build: error %s", err.Error())
@@ -293,6 +302,10 @@ func (nb *NewsBuilder) Build() (string, error) {
 	return gohtml.Format(str), nil
 }
 
+// Builder returns a *NewsBuilder configured with sensible defaults for the I2P
+// news feed.  newsFile is the path to the entries HTML source, releasesJson is
+// the path to the releases JSON file, and blocklistXML is the optional path to
+// an additional XML blocklist fragment (empty string disables it).
 func Builder(newsFile, releasesJson, blocklistXML string) *NewsBuilder {
 	nb := &NewsBuilder{
 		Feed: newsfeed.Feed{

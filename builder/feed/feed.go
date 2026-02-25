@@ -1,3 +1,5 @@
+// Package newsfeed parses HTML news entry files and exposes their content as
+// Article values suitable for embedding in an Atom feed.
 package newsfeed
 
 import (
@@ -19,6 +21,8 @@ func xmlEsc(s string) string {
 	return buf.String()
 }
 
+// Feed parses an HTML entries file and exposes its <article> elements as
+// individual Article values for use by NewsBuilder.
 type Feed struct {
 	HeaderTitle         string
 	ArticlesSet         []string
@@ -27,6 +31,9 @@ type Feed struct {
 	doc                 soup.Root
 }
 
+// LoadHTML reads the HTML file at EntriesHTMLPath, extracts the <header> title
+// and all <article> elements into ArticlesSet. If BaseEntriesHTMLPath is also
+// set, that file is read and its articles are appended after the primary set.
 func (f *Feed) LoadHTML() error {
 	data, err := os.ReadFile(f.EntriesHTMLPath)
 	if err != nil {
@@ -53,10 +60,13 @@ func (f *Feed) LoadHTML() error {
 	return nil
 }
 
+// Length returns the number of articles loaded from the entries HTML.
 func (f *Feed) Length() int {
 	return len(f.ArticlesSet)
 }
 
+// Article parses the HTML of ArticlesSet[index] and returns a new Article
+// populated with the attributes and summary text of that element.
 func (f *Feed) Article(index int) *Article {
 	html := soup.HTMLParse(f.ArticlesSet[index])
 	articleData := html.Find("article").Attrs()
@@ -73,6 +83,8 @@ func (f *Feed) Article(index int) *Article {
 	}
 }
 
+// Article holds the metadata and HTML content of a single Atom feed entry,
+// extracted from an <article> element in the entries HTML source.
 type Article struct {
 	UID           string
 	Title         string
@@ -101,6 +113,9 @@ func (a *Article) Content() string {
 	return str
 }
 
+// Entry renders the Article as an Atom <entry> XML fragment. All metadata
+// fields are XML-escaped; the XHTML body from Content() is embedded verbatim
+// inside a <content type="xhtml"> element and must not be double-escaped.
 func (a *Article) Entry() string {
 	// All text and attribute values are XML-escaped via xmlEsc so that special
 	// characters such as '&' in URLs (?a=1&b=2) or '<' in titles do not
