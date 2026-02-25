@@ -144,6 +144,88 @@ func TestOutputFilename(t *testing.T) {
 	}
 }
 
+// TestOutputFilenameForPlatform validates the platform/status namespacing
+// wrapper.  For the default (empty or "linux") platform the result must be
+// identical to outputFilename.  For all other platforms the output must be
+// prefixed with {platform}/{status}/.
+func TestOutputFilenameForPlatform(t *testing.T) {
+	tests := []struct {
+		name     string
+		newsFile string
+		newsRoot string
+		platform string
+		status   string
+		want     string
+	}{
+		{
+			name:     "empty platform — no prefix, same as outputFilename",
+			newsFile: filepath.Join("data", "entries.html"),
+			newsRoot: "data",
+			platform: "",
+			status:   "",
+			want:     "news.atom.xml",
+		},
+		{
+			name:     "linux platform — treated as default, no prefix",
+			newsFile: filepath.Join("data", "entries.html"),
+			newsRoot: "data",
+			platform: "linux",
+			status:   "stable",
+			want:     "news.atom.xml",
+		},
+		{
+			name:     "mac/stable canonical feed",
+			newsFile: filepath.Join("data", "mac", "stable", "entries.html"),
+			newsRoot: filepath.Join("data", "mac", "stable"),
+			platform: "mac",
+			status:   "stable",
+			want:     filepath.Join("mac", "stable", "news.atom.xml"),
+		},
+		{
+			name:     "mac/stable locale feed from top-level translations dir",
+			newsFile: filepath.Join("data", "translations", "entries.de.html"),
+			newsRoot: filepath.Join("data", "mac", "stable"),
+			platform: "mac",
+			status:   "stable",
+			want:     filepath.Join("mac", "stable", "news_de.atom.xml"),
+		},
+		{
+			name:     "mac/stable locale feed from platform translations dir",
+			newsFile: filepath.Join("data", "mac", "stable", "translations", "entries.de.html"),
+			newsRoot: filepath.Join("data", "mac", "stable"),
+			platform: "mac",
+			status:   "stable",
+			want:     filepath.Join("mac", "stable", "news_de.atom.xml"),
+		},
+		{
+			name:     "win/beta canonical feed with canonical fallback entries",
+			newsFile: filepath.Join("data", "entries.html"),
+			newsRoot: filepath.Join("data", "win", "beta"),
+			platform: "win",
+			status:   "beta",
+			want:     filepath.Join("win", "beta", "news.atom.xml"),
+		},
+		{
+			name:     "android/stable — future platform, canonical fallback",
+			newsFile: filepath.Join("data", "entries.html"),
+			newsRoot: filepath.Join("data", "android", "stable"),
+			platform: "android",
+			status:   "stable",
+			want:     filepath.Join("android", "stable", "news.atom.xml"),
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			got := outputFilenameForPlatform(tt.newsFile, tt.newsRoot, tt.platform, tt.status)
+			if got != tt.want {
+				t.Errorf("outputFilenameForPlatform(%q, %q, %q, %q) = %q; want %q",
+					tt.newsFile, tt.newsRoot, tt.platform, tt.status, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestEntriesHtmlFilter ensures that the filepath predicate used in the build
 // walk matches exactly files named "entries.html" and rejects other .html files.
 // This guards against the previous bug where all .html files were processed.

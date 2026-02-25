@@ -60,4 +60,15 @@ type Conf struct {
 	TrustedCerts []string `mapstructure:"trustedcerts"`
 	// SkipVerify disables su3 signature verification when true.
 	SkipVerify bool `mapstructure:"skipverify"`
+
+	// Platform filters the build to a single OS target when non-empty.
+	// Recognised values: "linux", "mac", "mac-arm64", "win",
+	//                    "android", "ios".
+	// Empty string means build the top-level (default/Linux) feeds only.
+	Platform string `mapstructure:"platform"`
+
+	// Status filters the build to a single release channel when non-empty.
+	// Recognised values: "stable", "beta", "alpha", "rc".
+	// Empty string means build all statuses found under the platform directory.
+	Status string `mapstructure:"status"`
 }

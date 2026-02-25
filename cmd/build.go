@@ -26,34 +26,46 @@ var buildCmd = &cobra.Command{
 		if e != nil {
 			log.Fatalf("build: stat %s: %v", c.NewsFile, e)
 		}
-		if f.IsDir() {
-			// Always build the canonical English feed first.
-			canonicaPath := filepath.Join(c.NewsFile, "entries.html")
-			if _, err := os.Stat(canonicaPath); err == nil {
-				build(canonicaPath)
-			}
-
-			// Resolve the translations directory: use the explicit flag value
-			// when set, otherwise fall back to the "translations" subdirectory
-			// next to the canonical entries file.
-			transDir := c.TranslationsDir
-			if transDir == "" {
-				transDir = filepath.Join(c.NewsFile, "translations")
-			}
-
-			// Auto-detect every entries.{locale}.html file in the translations
-			// directory and build a feed for each one.
-			for _, translationFile := range builder.DetectTranslationFiles(transDir) {
-				build(translationFile)
-			}
-		} else {
+		if !f.IsDir() {
+			// Single-file mode: unchanged behaviour.
 			build(c.NewsFile)
+			return
+		}
+
+		// Directory mode: determine the (platform, status) pairs to build.
+		type pair struct{ platform, status string }
+		var pairs []pair
+
+		switch {
+		case c.Platform != "" && c.Status != "":
+			// Explicit platform+status: build exactly one combination.
+			pairs = []pair{{c.Platform, c.Status}}
+		case c.Platform != "":
+			// Platform specified without status: try every known status.
+			for _, s := range builder.KnownStatuses() {
+				pairs = append(pairs, pair{c.Platform, s})
+			}
+		default:
+			// Neither flag set: build the default (Linux) tree first, then
+			// every (platform, status) combination present in the data dir.
+			pairs = append(pairs, pair{"", ""})
+			for _, p := range builder.KnownPlatforms() {
+				for _, s := range builder.KnownStatuses() {
+					pairs = append(pairs, pair{p, s})
+				}
+			}
+		}
+
+		for _, pr := range pairs {
+			buildPlatform(pr.platform, pr.status)
 		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(buildCmd)
+	buildCmd.Flags().String("platform", "", "target platform (linux|mac|mac-arm64|win|android|ios); empty = all")
+	buildCmd.Flags().String("status", "", "release channel (stable|beta|rc|alpha); empty = all found")
 	buildCmd.Flags().String("newsfile", "data", "entries to pass to news generator. If passed a directory, all 'entries.html' files in the directory will be processed")
 	// Flag name matches README: --blockfile (was incorrectly "blocklist").
 	// config.Conf.BlockList carries the mapstructure:"blockfile" tag so that
@@ -84,6 +96,107 @@ func defaultFeedURL() string {
 	// was returned anyway.  Removing the live-probe eliminates an unnecessary
 	// SAM connection attempt during flag initialization.
 	return "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml"
+}
+
+// buildPlatform builds all feeds (canonical English + locale variants) for a
+// single (platform, status) combination.  When platform is empty or "linux",
+// the top-level data directory is used (preserving the existing default
+// behaviour).  Combinations whose data directory does not contain a
+// releases.json are silently skipped with a log.Printf.
+func buildPlatform(platform, status string) {
+	dataDir := builder.PlatformDataDir(c.NewsFile, platform, status)
+	isDefault := platform == "" || platform == "linux"
+
+	// Determine the releases.json path.  For the default (Linux) tree honour
+	// the explicit --releasejson flag so that single-directory invocations
+	// without --platform/--status remain identical to the current behaviour.
+	// For all other platforms use the per-directory releases.json.
+	var releasesPath string
+	if isDefault {
+		releasesPath = c.ReleaseJsonFile
+	} else {
+		releasesPath = filepath.Join(dataDir, "releases.json")
+	}
+	if _, err := os.Stat(releasesPath); err != nil {
+		if isDefault {
+			log.Printf("build: skipping default tree: releases.json not found at %s", releasesPath)
+		} else {
+			log.Printf("build: skipping %s/%s: no releases.json found", platform, status)
+		}
+		return
+	}
+
+	canonicalEntries := filepath.Join(c.NewsFile, "entries.html")
+
+	// Determine the entries.html to use as the source for the canonical feed.
+	// For non-default platforms, prefer a platform-specific overlay when one
+	// exists; fall back to the top-level canonical file otherwise.
+	entriesPath := canonicalEntries
+	if !isDefault {
+		platformEntries := filepath.Join(dataDir, "entries.html")
+		if _, err := os.Stat(platformEntries); err == nil {
+			entriesPath = platformEntries
+		}
+	}
+
+	// Resolve the translations directory.  For the default tree honour the
+	// explicit --translationsdir flag.  For platform-specific trees prefer the
+	// per-platform translations directory and fall back to the top-level one.
+	var transDir string
+	if isDefault {
+		transDir = c.TranslationsDir
+		if transDir == "" {
+			transDir = filepath.Join(c.NewsFile, "translations")
+		}
+	} else {
+		platformTransDir := filepath.Join(dataDir, "translations")
+		if _, err := os.Stat(platformTransDir); err == nil {
+			transDir = platformTransDir
+		} else {
+			transDir = filepath.Join(c.NewsFile, "translations")
+		}
+	}
+
+	// Build canonical English feed.
+	buildForPlatform(entriesPath, dataDir, releasesPath, canonicalEntries, platform, status)
+
+	// Build per-locale feeds.
+	for _, tf := range builder.DetectTranslationFiles(transDir) {
+		buildForPlatform(tf, dataDir, releasesPath, canonicalEntries, platform, status)
+	}
+}
+
+// buildForPlatform is the per-file build step used by buildPlatform.  It is
+// analogous to the existing build() function but accepts explicit dataDir,
+// releasesPath, and platform/status parameters instead of reading them from
+// the global config directly.
+func buildForPlatform(newsFile, dataDir, releasesPath, canonicalEntries, platform, status string) {
+	news := builder.Builder(newsFile, releasesPath, c.BlockList)
+	news.Language = builder.LocaleFromPath(newsFile)
+	news.TITLE = c.FeedTitle
+	news.SITEURL = c.FeedSite
+	news.MAINFEED = c.FeedMain
+	news.BACKUPFEED = c.FeedBackup
+	news.SUBTITLE = c.FeedSubtitle
+	if c.FeedUuid != "" {
+		news.URNID = c.FeedUuid
+	} else {
+		news.URNID = uuid.NewString()
+	}
+	if newsFile != canonicalEntries {
+		news.Feed.BaseEntriesHTMLPath = canonicalEntries
+	}
+	if feed, err := news.Build(); err != nil {
+		log.Printf("Build error: %s", err)
+	} else {
+		filename := outputFilenameForPlatform(newsFile, dataDir, platform, status)
+		if err := os.MkdirAll(filepath.Join(c.BuildDir, filepath.Dir(filename)), 0o755); err != nil {
+			log.Fatalf("build: mkdir %s: %v", filepath.Join(c.BuildDir, filepath.Dir(filename)), err)
+		}
+		if err = os.WriteFile(filepath.Join(c.BuildDir, filename), []byte(feed), 0o644); err != nil {
+			log.Fatalf("build: write %s: %v", filepath.Join(c.BuildDir, filename), err)
+		}
+	}
 }
 
 func build(newsFile string) {
@@ -129,6 +242,20 @@ func build(newsFile string) {
 			log.Fatalf("build: write %s: %v", filepath.Join(c.BuildDir, filename), err)
 		}
 	}
+}
+
+// outputFilenameForPlatform calls outputFilename and prepends the
+// platform/status sub-path when platform is non-empty and not "linux".
+// newsRoot should be the platform-specific data directory (dataDir) so that
+// outputFilename produces a path relative to that directory; the
+// platform/status prefix is then prepended to place the file in the correct
+// sub-tree of BuildDir.
+func outputFilenameForPlatform(newsFile, newsRoot, platform, status string) string {
+	base := outputFilename(newsFile, newsRoot)
+	if platform == "" || platform == "linux" {
+		return base
+	}
+	return filepath.Join(platform, status, base)
 }
 
 // outputFilename derives the relative output path (.atom.xml) for a given
