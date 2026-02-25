@@ -52,7 +52,13 @@ var signCmd = &cobra.Command{
 				log.Println(err)
 			}
 		} else {
-			Sign(c.BuildDir)
+			// Capture and report the error in the single-file path so
+			// that key-load failures, su3 marshal errors, and write errors
+			// are visible to the operator — consistent with the directory
+			// walk path above which logs Sign() errors.
+			if err := Sign(c.BuildDir); err != nil {
+				log.Printf("Sign(%s): %v", c.BuildDir, err)
+			}
 		}
 	},
 }

@@ -205,9 +205,16 @@ func (nb *NewsBuilder) Build() (string, error) {
 	}
 	str += "<generator uri=\"http://idk.i2p/newsgo\" version=\"0.1.0\">newsgo</generator>"
 	str += "<subtitle>" + xmlEsc(nb.SUBTITLE) + "</subtitle>"
-	blocklistBytes, err := os.ReadFile(nb.BlocklistXML)
-	if err != nil {
-		return "", err
+	// A missing blocklist file is treated as an empty blocklist rather than a
+	// hard failure, because validateBlocklistXML accepts empty content.
+	// Only unexpected I/O errors (e.g. permission denied) are propagated.
+	var blocklistBytes []byte
+	if nb.BlocklistXML != "" {
+		var readErr error
+		blocklistBytes, readErr = os.ReadFile(nb.BlocklistXML)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return "", fmt.Errorf("Build: reading blocklist: %w", readErr)
+		}
 	}
 	// Validate before splicing: a blocklist with an XML declaration or broken
 	// markup would silently corrupt the output feed and every .su3 built from it.

@@ -121,7 +121,6 @@ func openDirectory(wd string) (string, error) {
 	}
 	var readme string
 	log.Println("Navigating directory:", wd)
-	nwd := strings.Join(strings.Split(wd, "/")[1:], "/")
 	readme += fmt.Sprintf("%s\n", filepath.Base(wd))
 	readme += fmt.Sprintf("%s\n", head(len(filepath.Base(wd))))
 	readme += fmt.Sprintf("%s\n", "")
@@ -148,7 +147,11 @@ func openDirectory(wd string) (string, error) {
 				log.Println("Listing error:", err)
 				sum = "(checksum unavailable)"
 			}
-			readme += fmt.Sprintf(" - [%s](%s/%s) : `%d` : `%s` - `%s`\n", entry.Name(), filepath.Base(nwd), filepath.Base(entry.Name()), info.Size(), info.Mode(), sum)
+			// Use just the bare filename as the link href so the relative
+			// reference resolves correctly whether or not the request URL
+			// has a trailing slash.  Using filepath.Base(nwd)/filename
+			// doubled the directory segment when the URL ended with '/'.
+			readme += fmt.Sprintf(" - [%s](%s) : `%d` : `%s` - `%s`\n", entry.Name(), entry.Name(), info.Size(), info.Mode(), sum)
 		} else {
 			log.Println(entry.Name(), entry.IsDir())
 			readme += fmt.Sprintf(" - [%s](%s/) : `%d` : `%s`\n", entry.Name(), entry.Name(), info.Size(), info.Mode())

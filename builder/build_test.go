@@ -464,6 +464,51 @@ func TestBuild_BlocklistWithDeclaration(t *testing.T) {
 	}
 }
 
+// TestBuild_MissingBlocklistFile verifies that Build() succeeds and produces a
+// valid feed when BlocklistXML points to a file that does not exist.  Before
+// the fix, os.ReadFile returned "no such file or directory" and Build() aborted
+// immediately, blocking first-time users who had not created the blocklist file.
+func TestBuild_MissingBlocklistFile(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	// Point BlocklistXML at a path that does not exist.
+	nb.BlocklistXML = filepath.Join(dir, "does_not_exist.xml")
+
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build() with missing blocklist: expected success, got error: %v", err)
+	}
+	if feed == "" {
+		t.Error("Build() with missing blocklist returned empty feed string")
+	}
+	// The produced feed must still be parseable XML.
+	dec := xml.NewDecoder(strings.NewReader(feed))
+	for {
+		_, err := dec.Token()
+		if err != nil && err.Error() == "EOF" {
+			break
+		}
+		if err != nil {
+			t.Errorf("feed produced with missing blocklist is not well-formed XML: %v", err)
+			break
+		}
+	}
+}
+
+// TestBuild_EmptyBlocklistPath verifies Build() succeeds when BlocklistXML is
+// the empty string (i.e. --blockfile ""), consistent with the same design
+// intent: absence of a blocklist is not an error.
+func TestBuild_EmptyBlocklistPath(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	nb.BlocklistXML = ""
+
+	_, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build() with empty BlocklistXML path: expected success, got error: %v", err)
+	}
+}
+
 // TestBuild_MalformedBlocklist verifies that Build() returns an error when the
 // blocklist file contains broken XML instead of silently producing an invalid feed.
 func TestBuild_MalformedBlocklist(t *testing.T) {

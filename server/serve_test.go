@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	stats "github.com/go-i2p/newsgo/server/stats"
@@ -206,6 +207,40 @@ func TestServeHTTP_PathTraversal(t *testing.T) {
 		if rw.Code != http.StatusBadRequest {
 			t.Errorf("path %q: expected 400 Bad Request, got %d", urlPath, rw.Code)
 		}
+	}
+}
+
+// TestOpenDirectory_FileLinksAreRelative verifies that file entries in a
+// directory listing use only the bare filename as the link href, not a path
+// component derived from the filesystem path.  Before the fix, a link for
+// "news.atom.xml" inside a "de/" subdirectory was rendered as "de/news.atom.xml"
+// instead of "news.atom.xml". When the request URL ends with a trailing slash
+// ("/de/"), browsers resolved "de/news.atom.xml" relative to "/de/" as
+// "/de/de/news.atom.xml" — a doubled path that always 404ed.
+func TestOpenDirectory_FileLinksAreRelative(t *testing.T) {
+	// Create a directory structure: root/de/news.atom.xml
+	root := t.TempDir()
+	sub := filepath.Join(root, "de")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "news.atom.xml"), []byte("<feed/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	listing, err := openDirectory(sub)
+	if err != nil {
+		t.Fatalf("openDirectory: %v", err)
+	}
+
+	// The link text and href for "news.atom.xml" must be exactly the filename,
+	// not "de/news.atom.xml" which would double the directory when the URL has
+	// a trailing slash.
+	if !strings.Contains(listing, "(news.atom.xml)") {
+		t.Errorf("expected link href '(news.atom.xml)' in listing, got:\n%s", listing)
+	}
+	if strings.Contains(listing, "de/news.atom.xml") {
+		t.Errorf("link href must not contain directory prefix 'de/'; got doubled path in listing:\n%s", listing)
 	}
 }
 
