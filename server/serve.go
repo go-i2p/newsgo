@@ -148,8 +148,11 @@ func buildDirectoryHeader(wd string) string {
 // checksum; for subdirectories the checksum is omitted and a trailing slash is
 // appended to the link target. Checksum errors are logged and replaced with a
 // human-readable placeholder rather than aborting the listing.
+// The per-entry debug log that was here previously has been removed: it emitted
+// one log line per file in the directory on every directory-listing request,
+// producing ~60 log lines per request on a typical news server and drowning
+// real operational events in noise.
 func formatEntryLine(wd string, entry os.DirEntry, info os.FileInfo) string {
-	log.Println(entry.Name(), entry.IsDir())
 	if entry.IsDir() {
 		return fmt.Sprintf(" - [%s](%s/) : `%d` : `%s`\n", entry.Name(), entry.Name(), info.Size(), info.Mode())
 	}
@@ -207,15 +210,31 @@ func serveDirectory(file string, rw http.ResponseWriter) error {
 	return nil
 }
 
-// serveStaticFile reads the regular file at path and writes its contents to rw,
-// logging the filename and resolved content-type.
-func serveStaticFile(file, ftype string, rw http.ResponseWriter) error {
-	data, err := os.ReadFile(file)
+// serveStaticFile streams the regular file at path to rw using
+// http.ServeContent, which:
+//
+//   - reads the file in chunks instead of slurping the whole thing into a
+//     []byte buffer — important for multi-MB .su3 news files;
+//   - honours If-Modified-Since / If-None-Match, avoiding redundant transfers;
+//   - honours Range requests, enabling resumable downloads.
+//
+// The Content-Type header must already be set on rw before this is called
+// (ServeFile does this); http.ServeContent will not override an existing value.
+func serveStaticFile(file, ftype string, rw http.ResponseWriter, rq *http.Request) error {
+	f, err := os.Open(file)
 	if err != nil {
 		return fmt.Errorf("ServeFile: %s", err)
 	}
-	log.Println("ServeFile: ", file, ftype)
-	rw.Write(data) //nolint:errcheck
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("ServeFile: stat %s: %w", file, err)
+	}
+	log.Println("ServeFile:", file, ftype)
+	// http.ServeContent streams content and handles conditional/range GETs.
+	// It uses the Content-Type already set in rw.Header() and will not sniff
+	// or override it.
+	http.ServeContent(rw, rq, filepath.Base(file), fi.ModTime(), f)
 	return nil
 }
 
@@ -231,7 +250,10 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 		// Log stats here
 		n.Stats.Increment(rq)
 	}
-	rw.Header().Add("Content-Type", ftype)
+	// Set (not Add) so that any Content-Type written by upstream middleware is
+	// replaced rather than duplicated. RFC 7231 §3.1.1.5 treats Content-Type
+	// as a singleton field; duplicate values are non-conformant.
+	rw.Header().Set("Content-Type", ftype)
 	// Only the canonical stats-graph basename is rendered dynamically.
 	// An actual .svg file on disk (e.g. a logo) should be served as a
 	// static file through the normal path below.
@@ -249,7 +271,7 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 	if f.IsDir() {
 		return serveDirectory(file, rw)
 	}
-	return serveStaticFile(file, ftype, rw)
+	return serveStaticFile(file, ftype, rw, rq)
 }
 
 // Serve constructs a NewsServer rooted at newsDir and loads any previously

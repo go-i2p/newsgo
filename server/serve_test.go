@@ -325,6 +325,88 @@ func TestServeHTTP_ExistingSVGFile_Served(t *testing.T) {
 	}
 }
 
+// TestServeHTTP_ContentType_SingleValue verifies that a response carries
+// exactly one Content-Type value even when upstream middleware has pre-set the
+// header. Before the fix, ServeFile called rw.Header().Add("Content-Type", …)
+// which appended a second value instead of replacing the first.
+func TestServeHTTP_ContentType_SingleValue(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "news.atom.xml"), []byte("<feed/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+	rw := httptest.NewRecorder()
+	// Simulate middleware that pre-sets an incorrect Content-Type.
+	rw.Header().Set("Content-Type", "text/plain")
+
+	rq := httptest.NewRequest(http.MethodGet, "/news.atom.xml", nil)
+	s.ServeHTTP(rw, rq)
+
+	values := rw.Result().Header["Content-Type"]
+	if len(values) != 1 {
+		t.Errorf("Content-Type header has %d value(s), want exactly 1: %v", len(values), values)
+	}
+	if len(values) > 0 && values[0] != "application/atom+xml" {
+		t.Errorf("Content-Type = %q, want %q", values[0], "application/atom+xml")
+	}
+}
+
+// TestServeHTTP_ConditionalGET_NotModified verifies that the server returns
+// HTTP 304 Not Modified when the client supplies an If-Modified-Since header
+// that is at or after the file's modification time. Before the fix,
+// serveStaticFile used os.ReadFile + rw.Write, which always sends HTTP 200
+// with the full body regardless of the If-Modified-Since header.
+func TestServeHTTP_ConditionalGET_NotModified(t *testing.T) {
+	dir := t.TempDir()
+	fpath := filepath.Join(dir, "news.atom.xml")
+	if err := os.WriteFile(fpath, []byte("<feed/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(fpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+	rw := httptest.NewRecorder()
+	rq := httptest.NewRequest(http.MethodGet, "/news.atom.xml", nil)
+	// Set If-Modified-Since to the file's exact modification time.
+	rq.Header.Set("If-Modified-Since", fi.ModTime().UTC().Format(http.TimeFormat))
+	s.ServeHTTP(rw, rq)
+
+	if rw.Code != http.StatusNotModified {
+		t.Errorf("conditional GET: expected 304 Not Modified, got %d", rw.Code)
+	}
+}
+
+// TestServeHTTP_RangeRequest verifies that the server returns HTTP 206 Partial
+// Content for a well-formed Range request. Before the fix, serveStaticFile
+// used rw.Write which ignores Range headers entirely and always returns 200
+// with the full body.
+func TestServeHTTP_RangeRequest(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("<feed>hello</feed>")
+	if err := os.WriteFile(filepath.Join(dir, "news.atom.xml"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+	rw := httptest.NewRecorder()
+	rq := httptest.NewRequest(http.MethodGet, "/news.atom.xml", nil)
+	// Request only the first 6 bytes.
+	rq.Header.Set("Range", "bytes=0-5")
+	s.ServeHTTP(rw, rq)
+
+	if rw.Code != http.StatusPartialContent {
+		t.Errorf("range GET: expected 206 Partial Content, got %d", rw.Code)
+	}
+	got := rw.Body.Bytes()
+	want := content[0:6]
+	if !bytes.Equal(got, want) {
+		t.Errorf("range body = %q, want %q", got, want)
+	}
+}
+
 // statsForTest constructs a NewsStats suitable for use in tests. It
 // initialises DownloadLangs directly rather than calling Load so that
 // the embedded sync.RWMutex is never used before the value is returned.
