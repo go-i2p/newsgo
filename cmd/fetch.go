@@ -36,6 +36,17 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		viper.Unmarshal(c)
 
+		// Critical fix: bypass the viper BindPFlags collision with serveCmd.
+		// Both fetchCmd and serveCmd register a "samaddr" flag; because Go
+		// processes source files in lexical order (fetch.go before serve.go),
+		// serve.go's viper.BindPFlags call overwrites the "samaddr" binding so
+		// that viper.pflags["samaddr"] always points to serveCmd's (unchanged)
+		// flag. Reading directly from this command's flag set guarantees we get
+		// whatever value the user actually provided on the fetch sub-command.
+		if sa, err := cmd.Flags().GetString("samaddr"); err == nil {
+			c.SamAddr = sa
+		}
+
 		urls := collectURLs(c.NewsURL, c.NewsURLs)
 		if len(urls) == 0 {
 			log.Fatal("fetch: no URL supplied; use --newsurl or --newsurls")

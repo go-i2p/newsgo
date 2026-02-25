@@ -22,6 +22,17 @@ var buildCmd = &cobra.Command{
 		// string), causing the very first os.Stat(c.NewsFile) to panic.
 		viper.Unmarshal(c)
 
+		// Critical fix: bypass the viper BindPFlags collision with signCmd.
+		// Both buildCmd and signCmd register a "builddir" flag; because Go
+		// processes source files in lexical order (build.go before sign.go),
+		// sign.go's viper.BindPFlags call overwrites the "builddir" binding so
+		// that viper.pflags["builddir"] always points to signCmd's (unchanged)
+		// flag. Reading directly from this command's flag set guarantees we get
+		// whatever value the user actually provided on the build sub-command.
+		if bd, err := cmd.Flags().GetString("builddir"); err == nil {
+			c.BuildDir = bd
+		}
+
 		f, e := os.Stat(c.NewsFile)
 		if e != nil {
 			log.Fatalf("build: stat %s: %v", c.NewsFile, e)
@@ -275,12 +286,19 @@ func build(newsFile string) {
 		news.URNID = uuid.NewString()
 	}
 
-	// BaseEntriesHTMLPath must point to the root entries.html in the top-
-	// level source directory (c.NewsFile), not to a sub-path derived from
-	// the individual file being processed.  Using newsFile here produced a
-	// path like "data/translations/de/entries.html/entries.html" which is
-	// always invalid.
-	base := filepath.Join(c.NewsFile, "entries.html")
+	// BaseEntriesHTMLPath is the root entries.html that acts as the merge
+	// baseline for locale/overlay files.  When build() is called in single-
+	// file mode, newsFile IS c.NewsFile (a file path, e.g. "data/entries.html")
+	// — not a directory.  filepath.Dir extracts the parent directory so that
+	// base resolves to the same path as newsFile, making the condition false
+	// and leaving BaseEntriesHTMLPath unset (correct: no merge is needed when
+	// the caller already pointed at the canonical file).
+	//
+	// The previous code used filepath.Join(c.NewsFile, "entries.html") which,
+	// when c.NewsFile was "data/entries.html", produced the always-invalid
+	// path "data/entries.html/entries.html", causing LoadHTML to fail with
+	// "not a directory" for every single-file invocation.
+	base := filepath.Join(filepath.Dir(c.NewsFile), "entries.html")
 	if newsFile != base {
 		news.Feed.BaseEntriesHTMLPath = base
 	}

@@ -814,3 +814,229 @@ func TestLoadPrivateKey_AllTypesImplementCryptoSigner(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Tests for Critical Bug 1: viper BindPFlags collision
+//
+// Both buildCmd and signCmd register a "builddir" flag; both fetchCmd and
+// serveCmd register a "samaddr" flag.  Because viper.BindPFlags stores flag
+// bindings in a shared map keyed by name and Go runs init() functions in
+// lexical file order, the later command's registration overwrites the earlier
+// one.  The fix reads the value directly from the executing command's flag set
+// after viper.Unmarshal, bypassing the stale viper binding.
+// ---------------------------------------------------------------------------
+
+// TestViperBuildDirCollision_SeparateFlagInstances confirms that buildCmd and
+// signCmd own distinct pflag.Flag instances for "builddir", demonstrating that
+// the collision is real and that reading from cmd.Flags() (not viper) is the
+// only reliable way to get the buildCmd value.
+func TestViperBuildDirCollision_SeparateFlagInstances(t *testing.T) {
+	buildFlag := LookupFlag("build", "builddir")
+	signFlag := LookupFlag("sign", "builddir")
+
+	if buildFlag == nil {
+		t.Fatal("buildCmd has no 'builddir' flag")
+	}
+	if signFlag == nil {
+		t.Fatal("signCmd has no 'builddir' flag")
+	}
+	// The two flags must be different pointer values; sharing one would mean
+	// only one command could ever have a changed value.
+	if buildFlag == signFlag {
+		t.Error("buildCmd and signCmd share the same pflag.Flag for 'builddir'; collision is guaranteed")
+	}
+}
+
+// TestViperSamAddrCollision_SeparateFlagInstances confirms that fetchCmd and
+// serveCmd own distinct pflag.Flag instances for "samaddr".
+func TestViperSamAddrCollision_SeparateFlagInstances(t *testing.T) {
+	fetchFlag := LookupFlag("fetch", "samaddr")
+	serveFlag := LookupFlag("serve", "samaddr")
+
+	if fetchFlag == nil {
+		t.Fatal("fetchCmd has no 'samaddr' flag")
+	}
+	if serveFlag == nil {
+		t.Fatal("serveCmd has no 'samaddr' flag")
+	}
+	if fetchFlag == serveFlag {
+		t.Error("fetchCmd and serveCmd share the same pflag.Flag for 'samaddr'; collision is guaranteed")
+	}
+}
+
+// TestViperBuildDirCollision_DirectFlagReadReturnsCorrectValue verifies the
+// fix: reading "builddir" via buildCmd.Flags().GetString returns the value
+// set on buildCmd's own flag set, not whatever viper's shared binding points
+// to (which after sign.go's BindPFlags call is signCmd's unchanged default).
+func TestViperBuildDirCollision_DirectFlagReadReturnsCorrectValue(t *testing.T) {
+	buildFlag := LookupFlag("build", "builddir")
+	if buildFlag == nil {
+		t.Fatal("buildCmd has no 'builddir' flag")
+	}
+
+	// Simulate the user supplying --builddir /tmp/custom on the build command.
+	if err := buildFlag.Value.Set("/tmp/custom"); err != nil {
+		t.Fatalf("could not set buildCmd 'builddir' flag value: %v", err)
+	}
+	t.Cleanup(func() {
+		// Restore default so other tests are not affected.
+		_ = buildFlag.Value.Set("build")
+		buildFlag.Changed = false
+	})
+
+	got := buildFlag.Value.String()
+	if got != "/tmp/custom" {
+		t.Errorf("buildCmd 'builddir' = %q; want %q", got, "/tmp/custom")
+	}
+
+	// signCmd's flag must still be at the default, confirming that setting
+	// buildCmd's flag does not affect signCmd's flag.
+	signFlag := LookupFlag("sign", "builddir")
+	if signFlag == nil {
+		t.Fatal("signCmd has no 'builddir' flag")
+	}
+	if signFlag.Value.String() == "/tmp/custom" {
+		t.Error("setting buildCmd 'builddir' also changed signCmd 'builddir'; flags are unexpectedly aliased")
+	}
+}
+
+// TestViperSamAddrCollision_DirectFlagReadReturnsCorrectValue verifies the
+// fix: reading "samaddr" via fetchCmd.Flags().GetString returns only the value
+// set on fetchCmd's own flag set, independent of serveCmd's binding.
+func TestViperSamAddrCollision_DirectFlagReadReturnsCorrectValue(t *testing.T) {
+	fetchFlag := LookupFlag("fetch", "samaddr")
+	if fetchFlag == nil {
+		t.Fatal("fetchCmd has no 'samaddr' flag")
+	}
+
+	const customAddr = "127.0.0.1:7655"
+	if err := fetchFlag.Value.Set(customAddr); err != nil {
+		t.Fatalf("could not set fetchCmd 'samaddr' flag value: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = fetchFlag.Value.Set(onramp.SAM_ADDR)
+		fetchFlag.Changed = false
+	})
+
+	got := fetchFlag.Value.String()
+	if got != customAddr {
+		t.Errorf("fetchCmd 'samaddr' = %q; want %q", got, customAddr)
+	}
+
+	serveFlag := LookupFlag("serve", "samaddr")
+	if serveFlag == nil {
+		t.Fatal("serveCmd has no 'samaddr' flag")
+	}
+	if serveFlag.Value.String() == customAddr {
+		t.Error("setting fetchCmd 'samaddr' also changed serveCmd 'samaddr'; flags are unexpectedly aliased")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests for Critical Bug 2: single-file build() path computation
+//
+// When --newsfile points to a file (e.g. data/entries.html) rather than a
+// directory, the old code computed:
+//   base = filepath.Join(c.NewsFile, "entries.html")   // "data/entries.html/entries.html"
+// which is always an invalid path, causing os.ReadFile to fail with
+// "not a directory".  The fix uses filepath.Dir(c.NewsFile) so that base
+// equals newsFile when newsFile is the canonical entries.html, leaving
+// BaseEntriesHTMLPath unset (no merge needed in single-file mode).
+// ---------------------------------------------------------------------------
+
+// TestSingleFileBuild_BasePathComputation verifies the corrected path
+// arithmetic directly, without requiring a live build: when c.NewsFile is a
+// file like "data/entries.html", filepath.Join(filepath.Dir(c.NewsFile),
+// "entries.html") must equal c.NewsFile so that the "newsFile != base"
+// condition is false and BaseEntriesHTMLPath is left unset.
+func TestSingleFileBuild_BasePathComputation(t *testing.T) {
+	cases := []struct {
+		newsFile string // a file path, as supplied by --newsfile in single-file mode
+	}{
+		{"data/entries.html"},
+		{"entries.html"},
+		{"/abs/path/entries.html"},
+		{"some/deep/dir/entries.html"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.newsFile, func(t *testing.T) {
+			// Reproduce the fixed computation from build().
+			base := filepath.Join(filepath.Dir(tc.newsFile), "entries.html")
+
+			// The condition that guards BaseEntriesHTMLPath assignment must be false:
+			// newsFile IS the canonical file, so no merge baseline is needed.
+			if tc.newsFile != base {
+				t.Errorf(
+					"fixed computation: filepath.Join(filepath.Dir(%q), \"entries.html\") = %q, "+
+						"not equal to newsFile — BaseEntriesHTMLPath would be set to an invalid sub-path",
+					tc.newsFile, base,
+				)
+			}
+
+			// Also confirm the OLD (buggy) computation produces a wrong path.
+			oldBase := filepath.Join(tc.newsFile, "entries.html")
+			if tc.newsFile == oldBase {
+				// If somehow they're equal the bug wouldn't manifest — flag it.
+				t.Logf("note: old computation coincidentally matched for %q (not the common case)", tc.newsFile)
+			} else {
+				// Confirm the old base is the invalid "file/entries.html" path.
+				if !strings.HasSuffix(oldBase, filepath.Join(filepath.Base(tc.newsFile), "entries.html")) {
+					t.Errorf("unexpected old-computation result %q for newsFile %q", oldBase, tc.newsFile)
+				}
+			}
+		})
+	}
+}
+
+// TestSingleFileBuild_ProducesOutput is an integration test verifying that
+// calling build() with a single entries.html file path (single-file mode)
+// actually produces a news feed instead of failing with
+// "open data/entries.html/entries.html: not a directory".
+func TestSingleFileBuild_ProducesOutput(t *testing.T) {
+	dir := t.TempDir()
+	buildDir := t.TempDir()
+
+	const releasesJSON = `[{"date":"2025-01-01","version":"2.0.0","minVersion":"0.9.9","minJavaVersion":"1.8","updates":{"su3":{"torrent":"magnet:?xt=urn:btih:abc","url":["http://example.com/update.su3"]}}}]`
+	const entriesHTML = `<html><body><header>H</header><article id="urn:single:1" title="T" href="http://x.com" author="A" published="2025-01-01" updated="2025-01-01"><details><summary>S</summary></details><p>body</p></article></body></html>`
+	const blocklistXML = ``
+
+	entriesFile := filepath.Join(dir, "entries.html")
+	releasesFile := filepath.Join(dir, "releases.json")
+	blocklistFile := filepath.Join(dir, "blocklist.xml")
+
+	must(t, os.WriteFile(entriesFile, []byte(entriesHTML), 0o644))
+	must(t, os.WriteFile(releasesFile, []byte(releasesJSON), 0o644))
+	must(t, os.WriteFile(blocklistFile, []byte(blocklistXML), 0o644))
+
+	prev := *c
+	defer func() { *c = prev }()
+	// Single-file mode: NewsFile points at the file, not the directory.
+	c.NewsFile = entriesFile
+	c.ReleaseJsonFile = releasesFile
+	c.BlockList = blocklistFile
+	c.BuildDir = buildDir
+	c.FeedTitle = "Test Feed"
+	c.FeedSite = "http://example.com"
+	c.FeedMain = "http://example.com/news.atom.xml"
+	c.FeedBackup = ""
+	c.FeedSubtitle = "sub"
+	c.FeedUuid = "00000000-0000-0000-0000-000000000099"
+	c.TranslationsDir = ""
+
+	// build() is the single-file handler called from buildCmd.Run when
+	// c.NewsFile is not a directory.
+	build(entriesFile)
+
+	// With the fix, news.atom.xml must be produced in BuildDir.
+	out := filepath.Join(buildDir, "news.atom.xml")
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("single-file build() did not produce %s: %v\n"+
+			"(pre-fix: this failed with 'open .../entries.html/entries.html: not a directory')",
+			out, err,
+		)
+	}
+	if !strings.Contains(string(data), "urn:single:1") {
+		t.Errorf("output %s does not contain expected article id 'urn:single:1'; content:\n%s", out, string(data))
+	}
+}
