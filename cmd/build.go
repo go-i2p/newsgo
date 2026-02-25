@@ -120,6 +120,74 @@ func resolveOverrideFile(platformPath, globalFallback string) string {
 	return globalFallback
 }
 
+// resolveReleasesPath returns the resolved releases.json path for a platform
+// build and whether the build should proceed. For the default tree the global
+// --releasejson flag value is used. For named platforms the platform-specific
+// releases.json is preferred and the global file is used as the fallback.
+// When the resolved file does not exist, ok is false and a diagnostic message
+// is logged; the caller should return without building any feeds.
+func resolveReleasesPath(dataDir string, isDefault bool, globalPath, platform, status string) (path string, ok bool) {
+	if isDefault {
+		path = globalPath
+	} else {
+		path = resolveOverrideFile(filepath.Join(dataDir, "releases.json"), globalPath)
+	}
+	if _, err := os.Stat(path); err != nil {
+		if isDefault {
+			log.Printf("build: skipping default tree: releases.json not found at %s", path)
+		} else {
+			log.Printf("build: skipping %s/%s: no releases.json found (platform or global)", platform, status)
+		}
+		return path, false
+	}
+	return path, true
+}
+
+// resolveBlocklistPath returns the resolved blocklist.xml path for a platform
+// build. For the default tree the global config value is returned unchanged.
+// For named platforms the platform-specific file is preferred, with the global
+// file used as the fallback so the jar-feed blocklist is always the baseline.
+func resolveBlocklistPath(dataDir string, isDefault bool, globalPath string) string {
+	if isDefault {
+		return globalPath
+	}
+	return resolveOverrideFile(filepath.Join(dataDir, "blocklist.xml"), globalPath)
+}
+
+// resolveEntriesPath returns the entries.html to use as the primary source for
+// a platform build. For the default tree the canonical entries.html is returned
+// directly. For named platforms a platform-specific entries.html is used when
+// it exists; otherwise the canonical file is returned as the fallback.
+func resolveEntriesPath(dataDir, canonicalEntries string, isDefault bool) string {
+	if isDefault {
+		return canonicalEntries
+	}
+	platformEntries := filepath.Join(dataDir, "entries.html")
+	if _, err := os.Stat(platformEntries); err == nil {
+		return platformEntries
+	}
+	return canonicalEntries
+}
+
+// resolveTranslationsDir returns the translations directory for a platform
+// build. For the default tree the --translationsdir flag value is honoured,
+// with a fallback derived from the news-file directory. For named platforms the
+// platform-specific translations directory is preferred and the top-level one
+// is used when it is absent.
+func resolveTranslationsDir(dataDir string, isDefault bool, newsFile, configTransDir string) string {
+	if isDefault {
+		if configTransDir != "" {
+			return configTransDir
+		}
+		return filepath.Join(newsFile, "translations")
+	}
+	platformTransDir := filepath.Join(dataDir, "translations")
+	if _, err := os.Stat(platformTransDir); err == nil {
+		return platformTransDir
+	}
+	return filepath.Join(newsFile, "translations")
+}
+
 // buildPlatform builds all feeds (canonical English + locale variants) for a
 // single (platform, status) combination.  When platform is empty or "linux",
 // the top-level data directory is used (preserving the existing default
@@ -147,77 +215,15 @@ func buildPlatform(platform, status string) {
 		}
 	}
 
-	// Resolve releases.json.
-	// Default tree: honour the explicit --releasejson flag unchanged.
-	// Platform tree: use the platform-specific file when present; fall back
-	// to the global releases.json so the jar feed is always the baseline.
-	var releasesPath string
-	if isDefault {
-		releasesPath = c.ReleaseJsonFile
-	} else {
-		releasesPath = resolveOverrideFile(
-			filepath.Join(dataDir, "releases.json"),
-			c.ReleaseJsonFile,
-		)
-	}
-	// Gate: the resolved releases.json must actually exist.
-	if _, err := os.Stat(releasesPath); err != nil {
-		if isDefault {
-			log.Printf("build: skipping default tree: releases.json not found at %s", releasesPath)
-		} else {
-			log.Printf("build: skipping %s/%s: no releases.json found (platform or global)", platform, status)
-		}
+	releasesPath, ok := resolveReleasesPath(dataDir, isDefault, c.ReleaseJsonFile, platform, status)
+	if !ok {
 		return
 	}
 
-	// Resolve blocklist.xml.
-	// Platform-specific blocklist overrides the global one when present;
-	// otherwise the global (jar) blocklist is used as the baseline.
-	var blocklistPath string
-	if isDefault {
-		blocklistPath = c.BlockList
-	} else {
-		blocklistPath = resolveOverrideFile(
-			filepath.Join(dataDir, "blocklist.xml"),
-			c.BlockList,
-		)
-	}
-
+	blocklistPath := resolveBlocklistPath(dataDir, isDefault, c.BlockList)
 	canonicalEntries := filepath.Join(c.NewsFile, "entries.html")
-
-	// Determine the entries.html to use as the primary source for the
-	// canonical English feed.
-	// For non-default platforms: use the platform-specific overlay when it
-	// exists; otherwise fall back to the global canonical file.
-	// The global entries are always merged in via Feed.BaseEntriesHTMLPath
-	// inside buildForPlatform whenever the primary source differs from the
-	// global canonical file, ensuring that jar-feed articles are always
-	// present in every per-platform output.
-	entriesPath := canonicalEntries
-	if !isDefault {
-		platformEntries := filepath.Join(dataDir, "entries.html")
-		if _, err := os.Stat(platformEntries); err == nil {
-			entriesPath = platformEntries
-		}
-	}
-
-	// Resolve the translations directory.  For the default tree honour the
-	// explicit --translationsdir flag.  For platform-specific trees prefer the
-	// per-platform translations directory and fall back to the top-level one.
-	var transDir string
-	if isDefault {
-		transDir = c.TranslationsDir
-		if transDir == "" {
-			transDir = filepath.Join(c.NewsFile, "translations")
-		}
-	} else {
-		platformTransDir := filepath.Join(dataDir, "translations")
-		if _, err := os.Stat(platformTransDir); err == nil {
-			transDir = platformTransDir
-		} else {
-			transDir = filepath.Join(c.NewsFile, "translations")
-		}
-	}
+	entriesPath := resolveEntriesPath(dataDir, canonicalEntries, isDefault)
+	transDir := resolveTranslationsDir(dataDir, isDefault, c.NewsFile, c.TranslationsDir)
 
 	// Build canonical English feed.
 	buildForPlatform(entriesPath, dataDir, releasesPath, blocklistPath, canonicalEntries, platform, status)

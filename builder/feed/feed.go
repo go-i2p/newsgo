@@ -43,6 +43,27 @@ type Feed struct {
 	doc                 soup.Root
 }
 
+// parseHTMLArticles reads the HTML file at path, extracts the <header> title
+// and all <article> elements. It returns the article HTML strings, the header
+// title text, a boolean indicating whether a <header> element was present
+// (regardless of its text content), and any I/O error encountered while
+// reading the file.
+func parseHTMLArticles(path string) (articles []string, headerTitle string, headerFound bool, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("LoadHTML: error %s", err)
+	}
+	doc := soup.HTMLParse(string(data))
+	if headerEl := doc.Find("header"); headerEl.Error == nil {
+		headerTitle = headerEl.FullText()
+		headerFound = true
+	}
+	for _, article := range doc.FindAll("article") {
+		articles = append(articles, article.HTML())
+	}
+	return articles, headerTitle, headerFound, nil
+}
+
 // LoadHTML reads the HTML file at EntriesHTMLPath, extracts the <header> title
 // and all <article> elements into ArticlesSet. If BaseEntriesHTMLPath is also
 // set, that file is read and its articles are appended after the primary set.
@@ -52,32 +73,25 @@ type Feed struct {
 // Find() returns a Root with a non-nil Error when the element isn't found;
 // calling FullText() on such a Root would panic, so the Error is checked first.
 func (f *Feed) LoadHTML() error {
-	data, err := os.ReadFile(f.EntriesHTMLPath)
+	articles, headerTitle, headerFound, err := parseHTMLArticles(f.EntriesHTMLPath)
 	if err != nil {
-		return fmt.Errorf("LoadHTML: error %s", err)
+		return err
 	}
-	f.doc = soup.HTMLParse(string(data))
-	if headerEl := f.doc.Find("header"); headerEl.Error == nil {
-		f.HeaderTitle = headerEl.FullText()
+	if headerFound {
+		f.HeaderTitle = headerTitle
 	}
-	articles := f.doc.FindAll("article")
-	for _, article := range articles {
-		f.ArticlesSet = append(f.ArticlesSet, article.HTML())
+	f.ArticlesSet = append(f.ArticlesSet, articles...)
+	if f.BaseEntriesHTMLPath == "" {
+		return nil
 	}
-	if f.BaseEntriesHTMLPath != "" {
-		data, err := os.ReadFile(f.BaseEntriesHTMLPath)
-		if err != nil {
-			return fmt.Errorf("LoadHTML: error %s", err)
-		}
-		f.doc = soup.HTMLParse(string(data))
-		if headerEl := f.doc.Find("header"); headerEl.Error == nil {
-			f.HeaderTitle = headerEl.FullText()
-		}
-		articles := f.doc.FindAll("article")
-		for _, article := range articles {
-			f.ArticlesSet = append(f.ArticlesSet, article.HTML())
-		}
+	baseArticles, baseTitle, baseHeaderFound, err := parseHTMLArticles(f.BaseEntriesHTMLPath)
+	if err != nil {
+		return err
 	}
+	if baseHeaderFound {
+		f.HeaderTitle = baseTitle
+	}
+	f.ArticlesSet = append(f.ArticlesSet, baseArticles...)
 	return nil
 }
 
