@@ -59,7 +59,8 @@ func (n *NewsStats) Graph(rw http.ResponseWriter) {
 
 // Increment records one su3 download. The lang query parameter selects the
 // language bucket; requests with no lang value are counted under "en_US".
-// Safe for concurrent use.
+// Safe for concurrent use. Increment is safe to call on a zero-value
+// NewsStats — it initialises DownloadLangs lazily if Load was never called.
 func (n *NewsStats) Increment(rq *http.Request) {
 	q := rq.URL.Query()
 	lang := q.Get("lang")
@@ -67,6 +68,11 @@ func (n *NewsStats) Increment(rq *http.Request) {
 		lang = "en_US"
 	}
 	n.mu.Lock()
+	if n.DownloadLangs == nil {
+		// Lazily initialise the map so callers that construct NewsStats
+		// directly (without calling Load) never hit a nil-map panic.
+		n.DownloadLangs = make(map[string]int)
+	}
 	n.DownloadLangs[lang]++
 	n.mu.Unlock()
 }

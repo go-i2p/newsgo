@@ -325,9 +325,15 @@ func TestServeHTTP_ExistingSVGFile_Served(t *testing.T) {
 	}
 }
 
+// statsForTest constructs a NewsStats suitable for use in tests. It
+// initialises DownloadLangs directly rather than calling Load so that
+// the embedded sync.RWMutex is never used before the value is returned.
+// Returning a struct that embeds a mutex after the mutex has been used
+// (as Load does) triggers a "copies lock value" go vet diagnostic.
 func statsForTest(dir string) stats.NewsStats {
 	sf := filepath.Join(dir, "stats.json")
-	ns := stats.NewsStats{StateFile: sf}
-	ns.Load()
-	return ns
+	return stats.NewsStats{
+		StateFile:     sf,
+		DownloadLangs: make(map[string]int),
+	}
 }

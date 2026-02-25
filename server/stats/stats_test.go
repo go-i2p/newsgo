@@ -82,6 +82,37 @@ func TestIncrement_AfterNullJSON(t *testing.T) {
 	}
 }
 
+// TestIncrement_ZeroValue verifies that Increment does not panic on a
+// zero-value NewsStats (i.e., when Load has never been called and
+// DownloadLangs is nil). Prior to the lazy-initialisation fix, calling
+// Increment on a directly-constructed &NewsStats{} panicked with
+// "assignment to entry in nil map".
+func TestIncrement_ZeroValue(t *testing.T) {
+	n := &NewsStats{}
+	rq := httptest.NewRequest(http.MethodGet, "/?lang=de", nil)
+	n.Increment(rq) // must not panic
+	n.mu.RLock()
+	got := n.DownloadLangs["de"]
+	n.mu.RUnlock()
+	if got != 1 {
+		t.Errorf("expected de=1 after increment on zero-value struct, got %d", got)
+	}
+}
+
+// TestIncrement_ZeroValue_DefaultLang verifies that Increment uses "en_US"
+// when no lang query parameter is supplied, even on a zero-value NewsStats.
+func TestIncrement_ZeroValue_DefaultLang(t *testing.T) {
+	n := &NewsStats{}
+	rq := httptest.NewRequest(http.MethodGet, "/news.su3", nil)
+	n.Increment(rq) // no lang param — should default to en_US
+	n.mu.RLock()
+	got := n.DownloadLangs["en_US"]
+	n.mu.RUnlock()
+	if got != 1 {
+		t.Errorf("expected en_US=1 for missing lang param, got %d", got)
+	}
+}
+
 func TestSaveLoad_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	sf := filepath.Join(dir, "stats.json")
