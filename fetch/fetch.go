@@ -55,9 +55,12 @@ func initSharedGarlic(samAddr string) (*onramp.Garlic, error) {
 		}
 		garlicMu.Lock()
 		if garlicClosed {
-			// CloseSharedGarlic ran before or concurrently; discard the session
-			// we just created so garlicErr = ErrGarlicClosed remains in effect.
-			if g != nil {
+			// CloseSharedGarlic ran before or concurrently.  Discard what we
+			// just created and leave garlicErr = ErrGarlicClosed in effect.
+			// Only close sessions opened via NewGarlic (samAddr != ""); the
+			// zero-value &onramp.Garlic{} has no SAM connection and panics
+			// on Close() because its internal stream session is nil.
+			if samAddr != "" && g != nil {
 				g.Close()
 			}
 		} else {
