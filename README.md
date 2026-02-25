@@ -13,7 +13,7 @@ Usage
 ### Commands
 
  - `serve`: Serve newsfeeds from a directory
- - `build`: Build newsfeeds from XML
+ - `build`: Build Atom XML newsfeeds from HTML entries
  - `sign`: Sign newsfeeds with local keys
  - `fetch`: Fetch, verify, and unpack a news feed from an I2P news server
 

@@ -15,7 +15,7 @@ import (
 // buildCmd represents the build command
 var buildCmd = &cobra.Command{
 	Use:   "build",
-	Short: "Build newsfeeds from XML",
+	Short: "Build Atom XML newsfeeds from HTML entries",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Populate the shared config struct from cobra flags and any config
 		// file. Without this call every field of c is the zero value (empty

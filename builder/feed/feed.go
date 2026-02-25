@@ -93,7 +93,8 @@ type Article struct {
 	PublishedDate string
 	UpdatedDate   string
 	Summary       string
-	// TODO: you have to collect this from the HTML itself and you have to take away the article and summary parts
+	// content holds the raw HTML of the article element as parsed from the entries HTML source.
+	// Content() extracts the body by skipping the wrapping <article> and <details>/<summary> nodes.
 	content string
 }
 
