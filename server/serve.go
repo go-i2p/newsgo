@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	stats "github.com/go-i2p/newsgo/server/stats"
 	"gitlab.com/golang-commonmark/markdown"
@@ -23,6 +25,46 @@ import (
 // check in fileCheck. All other *.svg requests go through os.Stat and
 // receive HTTP 404 if no matching file exists.
 const statsGraphFilename = "langstats.svg"
+
+// checksumEntry holds a single cached SHA-256 digest together with the file
+// modification time used to detect stale entries.
+type checksumEntry struct {
+	modTime time.Time
+	sum     string
+}
+
+// checksumCache is a concurrency-safe, mtime-keyed store for SHA-256 digests.
+// An entry is considered fresh only when its stored ModTime equals the current
+// file ModTime, so the cache is never stale longer than one file modification.
+type checksumCache struct {
+	mu    sync.RWMutex
+	items map[string]checksumEntry
+}
+
+// get returns (sum, true) when a fresh (non-stale) entry exists for path.
+func (c *checksumCache) get(path string, modTime time.Time) (string, bool) {
+	c.mu.RLock()
+	entry, ok := c.items[path]
+	c.mu.RUnlock()
+	if ok && entry.modTime.Equal(modTime) {
+		return entry.sum, true
+	}
+	return "", false
+}
+
+// set stores a digest for path with the given modification time.
+func (c *checksumCache) set(path string, modTime time.Time, sum string) {
+	c.mu.Lock()
+	c.items[path] = checksumEntry{modTime: modTime, sum: sum}
+	c.mu.Unlock()
+}
+
+// globalChecksumCache is the package-level instance used by fileChecksum.
+// It is intentionally not a field of NewsServer so that a warm cache survives
+// across multiple handler invocations within the same process lifetime.
+var globalChecksumCache = &checksumCache{
+	items: make(map[string]checksumEntry),
+}
 
 // NewsServer is an http.Handler that serves news feed files from NewsDir and
 // records su3 download statistics via Stats.
@@ -67,7 +109,14 @@ func (n *NewsServer) ServeHTTP(rw http.ResponseWriter, rq *http.Request) {
 	}
 	if err := n.ServeFile(file, rq, rw); err != nil {
 		log.Println("ServeHTTP:", err.Error())
-		rw.WriteHeader(404)
+		// Reset Content-Type so that error responses do not carry a feed-
+		// specific media type (e.g. application/atom+xml).  ServeFile sets the
+		// Content-Type header before performing its os.Stat; if that stat
+		// fails the header map already contains the wrong type.  Overwriting
+		// it here (before WriteHeader flushes headers to the client) ensures
+		// that HTTP clients receive a plain-text error response they can parse.
+		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		rw.WriteHeader(http.StatusNotFound)
 	}
 }
 
@@ -111,11 +160,26 @@ func fileType(file string) (string, error) {
 	}
 }
 
-// fileChecksum computes a SHA-256 checksum for the file at path by streaming
-// its contents through a hash.Hash.  Reading in chunks avoids allocating the
-// entire file content into memory, which matters for large .su3 files that
-// can be several megabytes each and are present in every directory listing.
+// fileChecksum returns the SHA-256 hex digest for the file at path.
+// Digests are cached keyed by (path, mtime): when the file has not changed
+// since the last computation the cached value is returned immediately,
+// avoiding a full file read on every directory-listing request.
+// A news-server build directory typically contains ~80–100 files; without
+// caching every directory listing request would hash all files from disk.
 func fileChecksum(path string) (string, error) {
+	// Stat first to get the modification time for the cache key.
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("fileChecksum: stat %s: %w", path, err)
+	}
+	modTime := fi.ModTime()
+
+	// Return cached digest when the file content has not changed.
+	if sum, ok := globalChecksumCache.get(path, modTime); ok {
+		return sum, nil
+	}
+
+	// Cache miss or stale entry: stream the file through sha256.
 	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("fileChecksum: open %s: %w", path, err)
@@ -125,7 +189,9 @@ func fileChecksum(path string) (string, error) {
 	if _, err := io.Copy(h, f); err != nil {
 		return "", fmt.Errorf("fileChecksum: hash %s: %w", path, err)
 	}
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
+	sum := fmt.Sprintf("%x", h.Sum(nil))
+	globalChecksumCache.set(path, modTime, sum)
+	return sum, nil
 }
 
 // buildDirectoryHeader generates the Markdown heading block for a directory
