@@ -276,11 +276,12 @@ func TestLoadHTML_HeaderTitle(t *testing.T) {
 	}
 }
 
-// TestLoadHTML_HeaderTitle_BaseFileOverwrites verifies that when
-// BaseEntriesHTMLPath is set, HeaderTitle is taken from the base file's
-// <header>, not the primary file's. This matches the documented behaviour in
-// LoadHTML: base articles are appended and the base header wins.
-func TestLoadHTML_HeaderTitle_BaseFileOverwrites(t *testing.T) {
+// TestLoadHTML_HeaderTitle_PrimaryWins verifies that the primary
+// (locale-specific) file's <header> title takes precedence over the base
+// file's title when both are present.  Before the fix the base file's title
+// unconditionally overwrote the primary, which caused every locale feed to
+// display the English title from the canonical entries.html.
+func TestLoadHTML_HeaderTitle_PrimaryWins(t *testing.T) {
 	dir := t.TempDir()
 	primary := filepath.Join(dir, "entries.html")
 	base := filepath.Join(dir, "base.html")
@@ -308,8 +309,49 @@ func TestLoadHTML_HeaderTitle_BaseFileOverwrites(t *testing.T) {
 	if err := f.LoadHTML(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(f.HeaderTitle, "Base Title") {
-		t.Errorf("LoadHTML() HeaderTitle = %q; want it to contain \"Base Title\" (base overrides primary)", f.HeaderTitle)
+	// PRIMARY title must win; base file must not overwrite it.
+	if !strings.Contains(f.HeaderTitle, "Primary Title") {
+		t.Errorf("LoadHTML() HeaderTitle = %q; want \"Primary Title\" (primary overrides base)", f.HeaderTitle)
+	}
+	if strings.Contains(f.HeaderTitle, "Base Title") {
+		t.Errorf("LoadHTML() HeaderTitle = %q; base title must not overwrite primary title", f.HeaderTitle)
+	}
+}
+
+// TestLoadHTML_HeaderTitle_BaseFileFallback verifies that the base file's
+// <header> title IS used when the primary file does not have a <header>
+// element, acting as a sensible fallback.
+func TestLoadHTML_HeaderTitle_BaseFileFallback(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "entries.html")
+	base := filepath.Join(dir, "base.html")
+
+	// Primary file has no <header>.
+	primaryHTML := `<html><body>
+<article id="1" title="A" href="http://example.com" author="B" published="2024-01-01" updated="2024-01-02">
+<details><summary>S</summary></details><p>Body</p>
+</article>
+</body></html>`
+	baseHTML := `<html><body>
+<header>Fallback Title</header>
+<article id="2" title="C" href="http://example.com/c" author="D" published="2024-02-01" updated="2024-02-02">
+<details><summary>T</summary></details><p>Base body</p>
+</article>
+</body></html>`
+
+	if err := os.WriteFile(primary, []byte(primaryHTML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base, []byte(baseHTML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &Feed{EntriesHTMLPath: primary, BaseEntriesHTMLPath: base}
+	if err := f.LoadHTML(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Base title must be used as a fallback when the primary has no <header>.
+	if !strings.Contains(f.HeaderTitle, "Fallback Title") {
+		t.Errorf("LoadHTML() HeaderTitle = %q; want \"Fallback Title\" (base fallback when primary has no header)", f.HeaderTitle)
 	}
 }
 
@@ -334,4 +376,86 @@ func TestLoadHTML_HeaderTitle_NoHeaderElement(t *testing.T) {
 	// An absent <header> element results in an empty HeaderTitle; build can
 	// still fall back to NewsBuilder.TITLE.
 	_ = f.HeaderTitle // no assertion on value; absence of panic is the contract
+}
+
+// --- toXHTML and XHTML Content() tests ---
+
+// TestToXHTML_VoidElements verifies that toXHTML correctly self-closes each
+// known HTML5 void element as produced by html.Render.
+func TestToXHTML_VoidElements(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"<br>", "<br/>"},
+		{"<hr>", "<hr/>"},
+		{"<img src=\"x.png\">", "<img src=\"x.png\"/>"},
+		{"<input type=\"text\">", "<input type=\"text\"/>"},
+		{"<meta charset=\"utf-8\">", "<meta charset=\"utf-8\"/>"},
+		{"<link rel=\"stylesheet\" href=\"s.css\">", "<link rel=\"stylesheet\" href=\"s.css\"/>"},
+		{"<br/>", "<br/>"},             // already self-closing: must remain unchanged
+		{"<p>text</p>", "<p>text</p>"}, // non-void element: must remain unchanged
+		// Multiple void elements in one fragment:
+		{"<p>Line one<br>line two</p>", "<p>Line one<br/>line two</p>"},
+	}
+	for _, tt := range tests {
+		got := toXHTML(tt.input)
+		if got != tt.want {
+			t.Errorf("toXHTML(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestContent_VoidElements_SelfClosed verifies that Content() produces
+// XHTML-compatible output when the article body contains void elements such as
+// <br> and <img>.  The Atom <content type="xhtml"> element is parsed as XML by
+// conforming feed readers (RFC 4287 §4.1.3.3), so void elements must be
+// self-closed; html.Render alone produces HTML5 serialization which omits the
+// self-closing slash.
+func TestContent_VoidElements_SelfClosed(t *testing.T) {
+	a := &Article{content: `<article><p>Line one<br>line two</p><hr><img src="x.png"></article>`}
+	got := a.Content()
+	// Bare void elements not self-closed → invalid XML in Atom feeds.
+	if strings.Contains(got, "<br>") {
+		t.Errorf("Content() contains bare <br> (not self-closed); Atom XML will be invalid: %q", got)
+	}
+	if strings.Contains(got, "<hr>") {
+		t.Errorf("Content() contains bare <hr> (not self-closed); Atom XML will be invalid: %q", got)
+	}
+	if strings.Contains(got, `<img src="`) && !strings.Contains(got, `<img src="x.png"/>`) {
+		t.Errorf("Content() contains bare <img> (not self-closed); Atom XML will be invalid: %q", got)
+	}
+	// Text content must be present.
+	if !strings.Contains(got, "Line one") {
+		t.Errorf("Content() dropped text content; got: %q", got)
+	}
+}
+
+// TestEntry_XHTMLVoidElements_WellFormedXML verifies that Article.Entry()
+// produces a well-formed XML entry even when the article body contains void
+// elements that html.Render would serialise without self-closing slashes.
+func TestEntry_XHTMLVoidElements_WellFormedXML(t *testing.T) {
+	a := &Article{
+		UID:           "urn:test:xhtml",
+		Title:         "Void Elements",
+		Link:          "http://example.com/",
+		Author:        "Author",
+		PublishedDate: "2024-01-01",
+		UpdatedDate:   "2024-01-02",
+		Summary:       "summary",
+		content:       `<article><details><summary>s</summary></details><p>Hello<br>world</p><hr></article>`,
+	}
+	entry := a.Entry()
+	document := `<?xml version="1.0"?>` + "<root>" + entry + "</root>"
+	dec := xml.NewDecoder(strings.NewReader(document))
+	for {
+		_, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Errorf("Entry() with void elements is not well-formed XML: %v\n\noutput:\n%s", err, entry)
+			break
+		}
+	}
 }

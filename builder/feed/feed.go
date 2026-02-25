@@ -8,10 +8,38 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/anaskhan96/soup"
 	"golang.org/x/net/html"
 )
+
+// htmlVoidElementRe matches HTML5 void element opening tags as produced by
+// html.Render (always lowercase, never self-closing).  Used by toXHTML to
+// insert the self-closing slash required by the XML subset of XHTML.
+var htmlVoidElementRe = regexp.MustCompile(
+	`<(area|base|br|col|embed|hr|img|input|keygen|link|meta|param|source|track|wbr)(\s[^>]*)?>`,
+)
+
+// toXHTML converts an HTML5-serialized fragment to XHTML by rewriting void
+// element opening tags to be self-closing (e.g. "<br>" → "<br/>",
+// "<img src=\"x\">" → "<img src=\"x\"/>").  This is required because Atom
+// feeds with <content type="xhtml"> treat their child content as actual XML
+// (RFC 4287 §4.1.3.3); non-self-closed void elements are not valid XML.
+//
+// html.Render always produces HTML5 output without self-closing slashes on
+// void elements, so a targeted post-processing pass is the simplest fix.
+// The transformation is idempotent: tags that already end with "/>" are
+// returned unchanged.
+func toXHTML(rawHTML string) string {
+	return htmlVoidElementRe.ReplaceAllStringFunc(rawHTML, func(match string) string {
+		if strings.HasSuffix(match, "/>") {
+			return match // already self-closing
+		}
+		return match[:len(match)-1] + "/>" // replace trailing ">" with "/>"
+	})
+}
 
 // xmlEsc returns s with XML-special characters replaced by their standard
 // entity references, making the value safe for XML text content and attribute
@@ -88,7 +116,10 @@ func (f *Feed) LoadHTML() error {
 	if err != nil {
 		return err
 	}
-	if baseHeaderFound {
+	// Only use the base file's header title as a fallback: when the primary
+	// (locale-specific) file already set HeaderTitle, the base file must not
+	// overwrite it — the locale file is the authoritative title source.
+	if baseHeaderFound && f.HeaderTitle == "" {
 		f.HeaderTitle = baseTitle
 	}
 	f.ArticlesSet = append(f.ArticlesSet, baseArticles...)
@@ -163,7 +194,12 @@ func (a *Article) Content() string {
 			log.Printf("Content: html.Render error: %v", err)
 		}
 	}
-	return buf.String()
+	// html.Render produces HTML5 serialization, which does not self-close void
+	// elements (e.g. <br>, <img>).  Because this content is embedded in an Atom
+	// <content type="xhtml"> element — parsed as XML by conforming readers —
+	// void elements must carry self-closing slashes.  toXHTML applies the
+	// minimal rewrite needed to produce valid XHTML from html.Render output.
+	return toXHTML(buf.String())
 }
 
 // Entry renders the Article as an Atom <entry> XML fragment. All metadata

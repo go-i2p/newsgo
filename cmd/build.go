@@ -44,30 +44,7 @@ var buildCmd = &cobra.Command{
 		}
 
 		// Directory mode: determine the (platform, status) pairs to build.
-		type pair struct{ platform, status string }
-		var pairs []pair
-
-		switch {
-		case c.Platform != "" && c.Status != "":
-			// Explicit platform+status: build exactly one combination.
-			pairs = []pair{{c.Platform, c.Status}}
-		case c.Platform != "":
-			// Platform specified without status: try every known status.
-			for _, s := range builder.KnownStatuses() {
-				pairs = append(pairs, pair{c.Platform, s})
-			}
-		default:
-			// Neither flag set: build the default (Linux) tree first, then
-			// every (platform, status) combination present in the data dir.
-			pairs = append(pairs, pair{"", ""})
-			for _, p := range builder.KnownPlatforms() {
-				for _, s := range builder.KnownStatuses() {
-					pairs = append(pairs, pair{p, s})
-				}
-			}
-		}
-
-		for _, pr := range pairs {
+		for _, pr := range collectBuildPairs(c.Platform, c.Status) {
 			buildPlatform(pr.platform, pr.status)
 		}
 	},
@@ -97,6 +74,58 @@ func init() {
 	// re-register it here — pflag panics on duplicate flag definitions.
 
 	viper.BindPFlags(buildCmd.Flags())
+}
+
+// buildPair holds the (platform, status) combination for a single build step.
+// An empty platform means the default feed tree; an empty status means all
+// known statuses are iterated by the caller.
+type buildPair struct{ platform, status string }
+
+// collectBuildPairs returns the ordered list of (platform, status) pairs for
+// directory-mode builds.  It implements the documented --platform / --status
+// filter semantics:
+//
+//   - Both flags set  → exactly one pair.
+//   - --platform only → all known statuses for that platform.
+//   - --status only   → that status for the default tree and every known platform.
+//   - Neither flag    → default tree (empty/empty) then all platform×status combos.
+//
+// Extracting this logic from the Run closure makes it independently testable.
+func collectBuildPairs(platform, status string) []buildPair {
+	switch {
+	case platform != "" && status != "":
+		// Explicit platform+status: build exactly one combination.
+		return []buildPair{{platform, status}}
+
+	case platform != "":
+		// Platform specified without status: try every known status.
+		var pairs []buildPair
+		for _, s := range builder.KnownStatuses() {
+			pairs = append(pairs, buildPair{platform, s})
+		}
+		return pairs
+
+	case status != "":
+		// Status specified without platform: apply that status to the default
+		// tree and every known platform.  This is the previously-missing case
+		// that caused --status to be silently ignored when --platform was absent.
+		pairs := []buildPair{{"", status}}
+		for _, p := range builder.KnownPlatforms() {
+			pairs = append(pairs, buildPair{p, status})
+		}
+		return pairs
+
+	default:
+		// Neither flag set: build the default tree first, then every
+		// (platform, status) combination.
+		pairs := []buildPair{{"", ""}}
+		for _, p := range builder.KnownPlatforms() {
+			for _, s := range builder.KnownStatuses() {
+				pairs = append(pairs, buildPair{p, s})
+			}
+		}
+		return pairs
+	}
 }
 
 func defaultFeedURL() string {

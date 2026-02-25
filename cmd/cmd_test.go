@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	builder "github.com/go-i2p/newsgo/builder"
 	newsfetch "github.com/go-i2p/newsgo/fetch"
 	"github.com/go-i2p/onramp"
 	"github.com/spf13/viper"
@@ -1096,5 +1097,97 @@ func TestOutputFilenameForPlatform_EmptyPlatformNoPrefix(t *testing.T) {
 	if got != want {
 		t.Errorf("outputFilenameForPlatform(%q, %q, \"\", \"\") = %q; want %q",
 			newsFile, newsRoot, got, want)
+	}
+}
+
+// --- collectBuildPairs tests ---
+// These tests directly exercise the pair-building function extracted from
+// buildCmd.Run to verify each documented --platform / --status combination.
+
+// TestCollectBuildPairs_BothFlags verifies that supplying both --platform and
+// --status produces exactly one pair with those exact values.
+func TestCollectBuildPairs_BothFlags(t *testing.T) {
+	pairs := collectBuildPairs("win", "stable")
+	if len(pairs) != 1 {
+		t.Fatalf("collectBuildPairs(\"win\", \"stable\") returned %d pairs, want 1", len(pairs))
+	}
+	if pairs[0].platform != "win" || pairs[0].status != "stable" {
+		t.Errorf("got pair {%q, %q}, want {\"win\", \"stable\"}", pairs[0].platform, pairs[0].status)
+	}
+}
+
+// TestCollectBuildPairs_PlatformOnly verifies that supplying only --platform
+// produces one pair per known status, all sharing the specified platform.
+func TestCollectBuildPairs_PlatformOnly(t *testing.T) {
+	pairs := collectBuildPairs("mac", "")
+	knownStatuses := builder.KnownStatuses()
+	if len(pairs) != len(knownStatuses) {
+		t.Fatalf("collectBuildPairs(\"mac\", \"\") returned %d pairs, want %d (one per status)",
+			len(pairs), len(knownStatuses))
+	}
+	for i, p := range pairs {
+		if p.platform != "mac" {
+			t.Errorf("pairs[%d].platform = %q, want \"mac\"", i, p.platform)
+		}
+		if p.status != knownStatuses[i] {
+			t.Errorf("pairs[%d].status = %q, want %q", i, p.status, knownStatuses[i])
+		}
+	}
+}
+
+// TestCollectBuildPairs_StatusOnly verifies that supplying only --status
+// produces one pair for the default tree (empty platform) plus one pair per
+// known platform, all sharing the specified status.
+// This is the previously-missing case: --status without --platform used to
+// fall through to the default branch and build ALL channels.
+func TestCollectBuildPairs_StatusOnly(t *testing.T) {
+	pairs := collectBuildPairs("", "stable")
+	knownPlatforms := builder.KnownPlatforms()
+	// expect: ("", "stable") + one entry per known platform
+	wantLen := 1 + len(knownPlatforms)
+	if len(pairs) != wantLen {
+		t.Fatalf("collectBuildPairs(\"\", \"stable\") returned %d pairs, want %d", len(pairs), wantLen)
+	}
+	// First entry must be the default tree with the fixed status.
+	if pairs[0].platform != "" || pairs[0].status != "stable" {
+		t.Errorf("pairs[0] = {%q, %q}, want {\"\", \"stable\"}", pairs[0].platform, pairs[0].status)
+	}
+	// Remaining entries must cover all platforms with the fixed status.
+	for i, p := range pairs[1:] {
+		if p.platform != knownPlatforms[i] {
+			t.Errorf("pairs[%d].platform = %q, want %q", i+1, p.platform, knownPlatforms[i])
+		}
+		if p.status != "stable" {
+			t.Errorf("pairs[%d].status = %q, want \"stable\"", i+1, p.status)
+		}
+	}
+}
+
+// TestCollectBuildPairs_StatusOnly_NoAlphaBetaleak verifies that
+// collectBuildPairs("", "stable") does NOT include beta/rc/alpha pairs,
+// which was the pre-fix behaviour when --status was silently ignored.
+func TestCollectBuildPairs_StatusOnly_NoAlphaBetaleak(t *testing.T) {
+	pairs := collectBuildPairs("", "stable")
+	for _, p := range pairs {
+		if p.status != "stable" {
+			t.Errorf("unexpected non-stable pair {%q, %q}; --status stable must filter all platforms",
+				p.platform, p.status)
+		}
+	}
+}
+
+// TestCollectBuildPairs_NoFlags verifies that passing no flags produces the
+// default tree entry followed by all (platform × status) combinations.
+func TestCollectBuildPairs_NoFlags(t *testing.T) {
+	pairs := collectBuildPairs("", "")
+	knownPlatforms := builder.KnownPlatforms()
+	knownStatuses := builder.KnownStatuses()
+	wantLen := 1 + len(knownPlatforms)*len(knownStatuses)
+	if len(pairs) != wantLen {
+		t.Fatalf("collectBuildPairs(\"\", \"\") returned %d pairs, want %d", len(pairs), wantLen)
+	}
+	// First pair must be the default tree.
+	if pairs[0].platform != "" || pairs[0].status != "" {
+		t.Errorf("pairs[0] = {%q, %q}, want {\"\", \"\"}", pairs[0].platform, pairs[0].status)
 	}
 }
