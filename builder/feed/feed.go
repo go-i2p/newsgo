@@ -29,7 +29,13 @@ type Feed struct {
 	// Locale is the BCP 47 language tag for this feed (e.g. "de", "zh-TW").
 	// It is set by the caller and used for observability; Feed itself does not
 	// alter its parsing behaviour based on this field.
-	Locale              string
+	Locale string
+	// HeaderTitle holds the text content of the <header> element parsed from
+	// the entries HTML file by LoadHTML(). It is consumed by buildFeedHeader
+	// in the builder package as a fallback feed title: when NewsBuilder.TITLE
+	// is empty, HeaderTitle is used in the Atom <title> element instead.
+	// This allows the HTML source to declare the feed title without requiring
+	// a separate --feedtitle flag.
 	HeaderTitle         string
 	ArticlesSet         []string
 	EntriesHTMLPath     string

@@ -235,15 +235,26 @@ func validateBlocklistXML(content []byte) error {
 // The xml:lang attribute is set from nb.Language; it defaults to "en" when
 // nb.Language is empty to preserve backward-compatible output for callers that
 // construct NewsBuilder directly without setting the Language field.
+//
+// Title selection follows a two-level fallback:
+//  1. nb.TITLE when non-empty (set by --feedtitle or the Builder() default).
+//  2. nb.Feed.HeaderTitle when non-empty (parsed from the <header> element of
+//     the entries HTML by LoadHTML()). This allows the HTML source to drive the
+//     feed title without requiring a separate --feedtitle flag.
 func buildFeedHeader(nb *NewsBuilder, currentTime time.Time) string {
 	lang := nb.Language
 	if lang == "" {
 		lang = "en"
 	}
+	// Prefer the explicit TITLE field; fall back to the HTML header title.
+	title := nb.TITLE
+	if title == "" {
+		title = nb.Feed.HeaderTitle
+	}
 	str := "<?xml version='1.0' encoding='UTF-8'?>"
 	str += "<feed xmlns:i2p=\"http://geti2p.net/en/docs/spec/updates\" xmlns=\"http://www.w3.org/2005/Atom\" xml:lang=\"" + xmlEsc(lang) + "\">"
 	str += "<id>" + "urn:uuid:" + xmlEsc(nb.URNID) + "</id>"
-	str += "<title>" + xmlEsc(nb.TITLE) + "</title>"
+	str += "<title>" + xmlEsc(title) + "</title>"
 	milli := currentTime.Nanosecond() / 1_000_000
 	// No trailing newline: the \n was previously injected into the element text,
 	// causing RFC-3339 parsers and strict Atom validators to reject the timestamp.
