@@ -15,6 +15,7 @@ Usage
  - `serve`: Serve newsfeeds from a directory
  - `build`: Build newsfeeds from XML
  - `sign`: Sign newsfeeds with local keys
+ - `fetch`: Fetch, verify, and unpack a news feed from an I2P news server
 
 A config file (`$HOME/.newsgo.yaml`) and `NEWSGO_*` environment variables are
 also supported for all flags.
@@ -50,3 +51,12 @@ Use these options to configure the software
  - `--signerid`: ID of the news signer
  - `--signingkey`: path to the signing key
  - `--builddir`: directory containing `.atom.xml` feeds to sign
+
+#### Fetch Options(use with `fetch`)
+
+ - `--newsurl`: primary `.su3` news feed URL to fetch over I2P
+ - `--newsurls`: additional / backup news feed URLs tried in order after `--newsurl` (comma-separated)
+ - `--outdir`: directory to write unpacked Atom XML files to (default `build`)
+ - `--trustedcerts`: comma-separated list of PEM certificate files whose public keys are trusted to verify su3 signatures
+ - `--skipverify`: skip su3 signature verification (not recommended for production)
+ - `--samaddr`: advanced override for the SAMv3 gateway address

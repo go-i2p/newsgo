@@ -40,8 +40,8 @@ func ExecuteWithArgs(args []string) error {
 }
 
 // LookupFlag looks up a flag on the named sub-command.  commandName must be
-// one of "serve", "build", or "sign"; use "" to look up a persistent root
-// flag.  Returns nil when the command or flag is not found.
+// one of "serve", "build", "sign", or "fetch"; use "" to look up a persistent
+// root flag.  Returns nil when the command or flag is not found.
 func LookupFlag(commandName, flagName string) *pflag.Flag {
 	if commandName == "" {
 		return rootCmd.PersistentFlags().Lookup(flagName)

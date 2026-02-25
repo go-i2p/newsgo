@@ -40,4 +40,18 @@ type Conf struct {
 	BuildDir   string `mapstructure:"builddir"`
 	SignerId   string `mapstructure:"signerid"`
 	SigningKey string `mapstructure:"signingkey"`
+
+	// Fetch subcommand options.
+
+	// NewsURL is the primary news feed URL to fetch from (--newsurl).
+	NewsURL string `mapstructure:"newsurl"`
+	// NewsURLs holds additional / backup feed URLs (--newsurls, comma-separated).
+	NewsURLs []string `mapstructure:"newsurls"`
+	// OutDir is the directory where fetched and unpacked files are stored.
+	OutDir string `mapstructure:"outdir"`
+	// TrustedCerts lists PEM certificate files used to verify su3 signatures.
+	// An empty slice skips signature verification.
+	TrustedCerts []string `mapstructure:"trustedcerts"`
+	// SkipVerify disables su3 signature verification when true.
+	SkipVerify bool `mapstructure:"skipverify"`
 }
