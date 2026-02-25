@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	newsfetch "github.com/go-i2p/newsgo/fetch"
+	"github.com/go-i2p/onramp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -73,9 +74,10 @@ func init() {
 	fetchCmd.Flags().String("outdir", "build", "directory to write unpacked Atom XML files to")
 	fetchCmd.Flags().StringSlice("trustedcerts", nil, "PEM certificate files whose public keys are trusted to verify su3 signatures")
 	fetchCmd.Flags().Bool("skipverify", false, "skip su3 signature verification (not recommended for production)")
-	// samaddr is registered once in serve.go as a persistent flag — share it via
-	// viper so fetch can read it without re-registering the same flag and
-	// causing pflag to panic.
+	// --samaddr is also registered here (not only on serveCmd) because the
+	// README documents it as a fetch option.  Using the same default as
+	// serve.go (onramp.SAM_ADDR) so both commands behave consistently.
+	fetchCmd.Flags().String("samaddr", onramp.SAM_ADDR, "advanced: SAMv3 gateway address for I2P fetches")
 
 	viper.BindPFlags(fetchCmd.Flags())
 }

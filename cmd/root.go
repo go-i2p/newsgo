@@ -79,7 +79,11 @@ func initConfig() {
 	}
 
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-
+	// SetEnvPrefix ensures that only NEWSGO_* variables are mapped, matching
+	// the documented interface ("NEWSGO_PORT", "NEWSGO_NEWSDIR", etc.).
+	// Without this call viper reads bare names like PORT, which collides with
+	// variables set by container runtimes and shell environments.
+	viper.SetEnvPrefix("newsgo")
 	viper.AutomaticEnv() // read in environment variables that match
 
 	// If a config file is found, read it in.

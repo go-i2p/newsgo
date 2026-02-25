@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/go-i2p/onramp"
+	"github.com/spf13/viper"
 )
 
 // TestLoadPrivateKey_NilPEMGuard verifies that loadPrivateKey returns a
@@ -139,5 +142,46 @@ func TestSign_ReturnsErrorForMissingKey(t *testing.T) {
 	err := Sign("any.atom.xml")
 	if err == nil {
 		t.Fatal("Sign() returned nil for a missing signing key; expected a non-nil error")
+	}
+}
+
+// TestFetchCmd_SamAddrFlagRegistered verifies that --samaddr is registered on
+// the fetch subcommand, so that "newsgo fetch --samaddr <addr>" works as
+// documented in the README rather than returning "unknown flag: --samaddr".
+// The default value must match onramp.SAM_ADDR, consistent with serveCmd.
+func TestFetchCmd_SamAddrFlagRegistered(t *testing.T) {
+	f := LookupFlag("fetch", "samaddr")
+	if f == nil {
+		t.Fatal("--samaddr is not registered on fetchCmd; 'newsgo fetch --samaddr <addr>' would return unknown flag")
+	}
+	if got := f.DefValue; got != onramp.SAM_ADDR {
+		t.Errorf("--samaddr default = %q, want %q (onramp.SAM_ADDR)", got, onramp.SAM_ADDR)
+	}
+}
+
+// TestInitConfig_NewsgoEnvPrefix verifies that initConfig() instructs viper to
+// read NEWSGO_* prefixed environment variables, not bare names.
+//
+// Before the fix, viper.SetEnvPrefix("newsgo") was missing, so NEWSGO_PORT had
+// no effect and the server would silently use the default port.  Setting the
+// bare PORT would override the port, which conflicts with container runtimes
+// that set PORT for their own purposes.
+//
+// This test sets NEWSGO_PORT=9999 and PORT=1111, resets viper, calls
+// initConfig(), and expects viper to resolve "port" to "9999".
+func TestInitConfig_NewsgoEnvPrefix(t *testing.T) {
+	// t.Setenv restores the original value automatically after the test.
+	t.Setenv("NEWSGO_PORT", "9999")
+	t.Setenv("PORT", "1111")
+
+	// Reset viper so this test is not affected by prior cobra initialisation
+	// or other tests that may have already called initConfig().
+	viper.Reset()
+	initConfig()
+
+	got := viper.GetString("port")
+	if got != "9999" {
+		t.Errorf("viper.GetString(\"port\") = %q; want \"9999\" — "+
+			"NEWSGO_PORT is not being read (bare PORT=%q would give %q)", got, "1111", "1111")
 	}
 }
