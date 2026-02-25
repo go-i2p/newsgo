@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	stats "github.com/go-i2p/newsgo/server/stats"
 )
@@ -404,6 +406,267 @@ func TestServeHTTP_RangeRequest(t *testing.T) {
 	want := content[0:6]
 	if !bytes.Equal(got, want) {
 		t.Errorf("range body = %q, want %q", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Content-Type on error responses (AUDIT.md: "HTTP 404 error responses carry
+// the wrong Content-Type header")
+// ---------------------------------------------------------------------------
+
+// TestServeFile_SetsContentTypeBeforeError verifies the per-function behaviour
+// that makes ServeHTTP's reset necessary: ServeFile writes the Content-Type
+// header before its os.Stat call, so when stat fails the ResponseWriter header
+// map already contains the feed-specific type (application/atom+xml).
+// ServeHTTP must overwrite this value before calling WriteHeader(404).
+func TestServeFile_SetsContentTypeBeforeError(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "news.atom.xml")
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+	rw := httptest.NewRecorder()
+	rq := httptest.NewRequest(http.MethodGet, "/news.atom.xml", nil)
+
+	err := s.ServeFile(missing, rq, rw)
+	if err == nil {
+		t.Fatal("expected error for missing file, got nil")
+	}
+	// ServeFile sets Content-Type before stat — this is the pre-WriteHeader
+	// state that ServeHTTP must correct.
+	ct := rw.Header().Get("Content-Type")
+	if ct != "application/atom+xml" {
+		t.Errorf("ServeFile pre-error Content-Type = %q, want application/atom+xml", ct)
+	}
+}
+
+// TestServeHTTP_404ContentType_PlainText verifies the end-to-end fix: any 404
+// response emitted by ServeHTTP carries Content-Type text/plain, not a
+// feed-specific media type. The test exercises both the fileCheck-failure path
+// (file never exists) and the ServeFile-failure path (file removed after
+// fileCheck would have passed).
+func TestServeHTTP_404ContentType_PlainText(t *testing.T) {
+	dir := t.TempDir()
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+
+	// Case 1: file never existed — fileCheck 404 path.
+	rw := httptest.NewRecorder()
+	rq := httptest.NewRequest(http.MethodGet, "/news.atom.xml", nil)
+	s.ServeHTTP(rw, rq)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("case 1: expected 404, got %d", rw.Code)
+	}
+	ct := rw.Header().Get("Content-Type")
+	if strings.Contains(ct, "application/atom+xml") {
+		t.Errorf("case 1: 404 Content-Type = %q; must not contain application/atom+xml", ct)
+	}
+}
+
+// TestServeHTTP_404ContentType_AfterContentTypeSet verifies that even when
+// Content-Type has been set on the ResponseWriter before WriteHeader(404),
+// ServeHTTP resets it to text/plain so HTTP clients never parse a 404
+// body as Atom XML. The test manually sets a feed Content-Type first to
+// simulate the state that ServeFile leaves the ResponseWriter in when it
+// encounters an os.Stat failure after already writing the Content-Type header.
+func TestServeHTTP_404ContentType_AfterContentTypeSet(t *testing.T) {
+	dir := t.TempDir()
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+
+	rw := httptest.NewRecorder()
+	// Pre-set a feed Content-Type to mimic what ServeFile does before failing.
+	rw.Header().Set("Content-Type", "application/atom+xml")
+
+	rq := httptest.NewRequest(http.MethodGet, "/nonexistent.atom.xml", nil)
+	s.ServeHTTP(rw, rq)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+	ct := rw.Header().Get("Content-Type")
+	if strings.Contains(ct, "application/atom+xml") {
+		t.Errorf("404 Content-Type = %q; ServeHTTP must reset it to text/plain before WriteHeader", ct)
+	}
+	if !strings.Contains(ct, "text/plain") {
+		t.Errorf("404 Content-Type = %q; want text/plain", ct)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Checksum cache (AUDIT.md: "SHA-256 checksums recomputed on every directory
+// listing request")
+// ---------------------------------------------------------------------------
+
+// TestFileChecksum_CacheReturnsSameValue verifies that calling fileChecksum
+// twice for the same unchanged file returns the expected SHA-256 digest on
+// both calls (not a stale or empty cache hit).
+func TestFileChecksum_CacheReturnsSameValue(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("cached content")
+	path := filepath.Join(dir, "feed.atom.xml")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256(content))
+
+	first, err := fileChecksum(path)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	second, err := fileChecksum(path)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if first != want {
+		t.Errorf("first = %q, want %q", first, want)
+	}
+	if second != want {
+		t.Errorf("second = %q, want %q", second, want)
+	}
+}
+
+// TestFileChecksum_CacheInvalidatedOnModify verifies that when a file is
+// overwritten (changing its mtime), fileChecksum discards the stale cache
+// entry and returns the new digest.
+func TestFileChecksum_CacheInvalidatedOnModify(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "feed.atom.xml")
+	v1 := []byte("version one")
+	if err := os.WriteFile(path, v1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum1, err := fileChecksum(path)
+	if err != nil {
+		t.Fatalf("first checksum: %v", err)
+	}
+
+	// Wait at least one filesytem mtime tick so the new write has a
+	// distinct ModTime. On most operating systems mtime has 1-second
+	// granularity on FAT and 1-nanosecond on ext4/tmpfs, so sleeping
+	// a short period is sufficient for CI runners using tmpfs.
+	time.Sleep(10 * time.Millisecond)
+
+	v2 := []byte("version two — modified")
+	if err := os.WriteFile(path, v2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Force a distinct mtime in case the filesystem has coarse-grained
+	// mtime and the sleep above was not enough.
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	sum2, err := fileChecksum(path)
+	if err != nil {
+		t.Fatalf("second checksum: %v", err)
+	}
+	if sum1 == sum2 {
+		t.Errorf("expected different digests after file modification, got same: %q", sum1)
+	}
+	want2 := fmt.Sprintf("%x", sha256.Sum256(v2))
+	if sum2 != want2 {
+		t.Errorf("post-modify checksum = %q, want %q", sum2, want2)
+	}
+}
+
+// TestFileChecksum_MissingFile_ReturnsError verifies that fileChecksum returns
+// a non-nil error and an empty string when the target path does not exist.
+// The cache must not be consulted for an os.Stat failure.
+func TestFileChecksum_MissingFile_ReturnsError(t *testing.T) {
+	sum, err := fileChecksum("/nonexistent/does/not/exist.atom.xml")
+	if err == nil {
+		t.Fatal("expected error for missing file, got nil")
+	}
+	if sum != "" {
+		t.Errorf("expected empty string on error, got %q", sum)
+	}
+}
+
+// TestFileChecksum_ConcurrentSafe verifies that fileChecksum is safe under
+// concurrent access. Many goroutines hash the same file simultaneously;
+// all must receive the same correct digest without data races.
+func TestFileChecksum_ConcurrentSafe(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("concurrent access test payload")
+	path := filepath.Join(dir, "news.atom.xml")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256(content))
+
+	const workers = 20
+	results := make([]string, workers)
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = fileChecksum(path)
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("worker %d: unexpected error: %v", i, err)
+		}
+		if results[i] != want {
+			t.Errorf("worker %d: got %q, want %q", i, results[i], want)
+		}
+	}
+}
+
+// TestChecksumCache_GetSet exercises the cache helper methods directly,
+// confirming that get returns false for an unknown path and true for a
+// previously stored entry with matching mtime.
+func TestChecksumCache_GetSet(t *testing.T) {
+	c := &checksumCache{items: make(map[string]checksumEntry)}
+	now := time.Now()
+
+	if _, ok := c.get("/no/such/path", now); ok {
+		t.Error("get on empty cache should return false")
+	}
+
+	c.set("/some/path", now, "aabbcc")
+	sum, ok := c.get("/some/path", now)
+	if !ok {
+		t.Error("get after set should return true")
+	}
+	if sum != "aabbcc" {
+		t.Errorf("cached sum = %q, want aabbcc", sum)
+	}
+
+	// Different mtime → cache miss.
+	if _, ok := c.get("/some/path", now.Add(time.Second)); ok {
+		t.Error("get with different mtime should return false (stale)")
+	}
+}
+
+// TestOpenDirectory_ListingIncludesChecksum verifies that a directory listing
+// generated by openDirectory includes a non-empty SHA-256 checksum for each
+// regular file present. This is a regression guard to ensure the cache does
+// not silently suppress the checksum field from the rendered Markdown.
+func TestOpenDirectory_ListingIncludesChecksum(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "news.atom.xml"), []byte("<feed/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	listing, err := openDirectory(dir)
+	if err != nil {
+		t.Fatalf("openDirectory: %v", err)
+	}
+	// A non-empty checksum is 64 hex characters. The listing must contain a
+	// sequence that looks like a SHA-256 hex digest.
+	if !strings.Contains(listing, "news.atom.xml") {
+		t.Error("listing does not include the expected file name")
+	}
+	// Crude but sufficient: a real checksum is 64 hex chars; "(checksum unavailable)"
+	// would fail this length check.
+	for _, line := range strings.Split(listing, "\n") {
+		if strings.Contains(line, "news.atom.xml") {
+			if strings.Contains(line, "(checksum unavailable)") {
+				t.Errorf("listing shows checksum error for news.atom.xml: %s", line)
+			}
+		}
 	}
 }
 

@@ -104,7 +104,8 @@ func (n *NewsServer) ServeHTTP(rw http.ResponseWriter, rq *http.Request) {
 	}
 	if err := fileCheck(file); err != nil {
 		log.Println("ServeHTTP:", err.Error())
-		rw.WriteHeader(404)
+		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		rw.WriteHeader(http.StatusNotFound)
 		return
 	}
 	if err := n.ServeFile(file, rq, rw); err != nil {
