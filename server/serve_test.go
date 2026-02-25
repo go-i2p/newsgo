@@ -155,6 +155,60 @@ func TestFileType_AtomXML(t *testing.T) {
 	}
 }
 
+// TestContainsPath verifies the containment helper used by the path-traversal
+// guard in ServeHTTP.
+func TestContainsPath(t *testing.T) {
+	tests := []struct {
+		root   string
+		target string
+		want   bool
+	}{
+		// Exact match of the root itself must be allowed (directory listing).
+		{"/srv/news", "/srv/news", true},
+		// Normal file inside root — must be allowed.
+		{"/srv/news", "/srv/news/news.atom.xml", true},
+		// Nested subdirectory — must be allowed.
+		{"/srv/news", "/srv/news/sub/dir/file.su3", true},
+		// Path that merely shares a prefix string is NOT inside root.
+		{"/srv/news", "/srv/news-extra/secret", false},
+		// Classic ../ traversal that filepath.Clean resolves.
+		{"/srv/news", "/etc/passwd", false},
+		// One level above root.
+		{"/srv/news", "/srv", false},
+	}
+	for _, tt := range tests {
+		got := containsPath(tt.root, tt.target)
+		if got != tt.want {
+			t.Errorf("containsPath(%q, %q) = %v, want %v", tt.root, tt.target, got, tt.want)
+		}
+	}
+}
+
+// TestServeHTTP_PathTraversal verifies that requests containing ".." components
+// are rejected with HTTP 400 Bad Request before any filesystem access occurs.
+func TestServeHTTP_PathTraversal(t *testing.T) {
+	// NewsDir points to a real temp directory; the traversal targets /etc/passwd
+	// which lives outside it.  The test must receive 400 regardless of whether
+	// /etc/passwd exists on the test host.
+	dir := t.TempDir()
+	s := &NewsServer{NewsDir: dir, Stats: statsForTest(dir)}
+
+	traversals := []string{
+		"/../../../etc/passwd",
+		"/../../etc/shadow",
+		"/../secret.txt",
+		"/%2e%2e/%2e%2e/etc/passwd", // percent-encoded (net/http decodes these)
+	}
+	for _, urlPath := range traversals {
+		rw := httptest.NewRecorder()
+		rq := httptest.NewRequest(http.MethodGet, urlPath, nil)
+		s.ServeHTTP(rw, rq)
+		if rw.Code != http.StatusBadRequest {
+			t.Errorf("path %q: expected 400 Bad Request, got %d", urlPath, rw.Code)
+		}
+	}
+}
+
 func statsForTest(dir string) stats.NewsStats {
 	sf := filepath.Join(dir, "stats.json")
 	ns := stats.NewsStats{StateFile: sf}

@@ -33,15 +33,22 @@ var serveCmd = &cobra.Command{
 
 		if c.Host != "" {
 			go func() {
+				// log.Fatalf produces a human-readable message and exits
+				// cleanly (exit code 1) instead of printing a raw panic
+				// traceback.  The most common cause is the TCP port already
+				// being bound, which is a routine operational error.
 				if err := serveHTTP(s, c.Host, c.Port); err != nil {
-					panic(err)
+					log.Fatalf("serveHTTP: %v", err)
 				}
 			}()
 		}
 		if c.I2P {
 			go func() {
+				// Same rationale: SAM session or garlic listener failures are
+				// operational events (slow SAM startup, missing gateway) that
+				// should produce a clean log line rather than a panic trace.
 				if err := serveI2P(s, c.SamAddr); err != nil {
-					panic(err)
+					log.Fatalf("serveI2P: %v", err)
 				}
 			}()
 		}

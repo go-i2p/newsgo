@@ -21,9 +21,31 @@ type NewsServer struct {
 
 var serveTest http.Handler = &NewsServer{}
 
+// containsPath reports whether target is contained within (or equal to) root.
+// Both paths must already be absolute and clean (produced by filepath.Clean).
+func containsPath(root, target string) bool {
+	// Exact match: the request resolves to the root directory itself.
+	if target == root {
+		return true
+	}
+	// Prefix match: target must start with root followed by the OS path
+	// separator so that a root of "/srv/news" does not falsely contain
+	// "/srv/news-extra/secret".
+	return strings.HasPrefix(target, root+string(filepath.Separator))
+}
+
 func (n *NewsServer) ServeHTTP(rw http.ResponseWriter, rq *http.Request) {
 	path := rq.URL.Path
 	file := filepath.Join(n.NewsDir, path)
+	// Reject any request whose resolved path escapes NewsDir.  filepath.Join
+	// calls filepath.Clean which resolves ".." components, so comparing the
+	// cleaned result against the cleaned NewsDir root is sufficient.
+	newsDir := filepath.Clean(n.NewsDir)
+	if !containsPath(newsDir, file) {
+		log.Printf("ServeHTTP: path traversal rejected: %q", rq.URL.Path)
+		http.Error(rw, "Bad Request", http.StatusBadRequest)
+		return
+	}
 	if err := fileCheck(file); err != nil {
 		log.Println("ServeHTTP:", err.Error())
 		rw.WriteHeader(404)
