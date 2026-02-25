@@ -89,26 +89,36 @@ func extractReleaseMetadata(release map[string]interface{}) (releasedate, versio
 	return
 }
 
-// extractSU3Update navigates the nested "updates"→"su3" path of a release
-// JSON object and returns the torrent magnet string and the list of download
-// URL values. An error is returned when any expected field is absent or has
-// an unexpected type.
-func extractSU3Update(release map[string]interface{}) (magnet string, urlSlice []interface{}, err error) {
+// navigateToSU3Map resolves the "updates"→"su3" path within a release JSON
+// object and returns the su3 map. It returns a descriptive error if any
+// intermediate field is absent or has an unexpected type.
+func navigateToSU3Map(release map[string]interface{}) (map[string]interface{}, error) {
 	updatesRaw, ok := release["updates"]
 	if !ok || updatesRaw == nil {
-		return "", nil, fmt.Errorf("JSONtoXML: missing field \"updates\"")
+		return nil, fmt.Errorf("JSONtoXML: missing field \"updates\"")
 	}
 	updatesMap, ok := updatesRaw.(map[string]interface{})
 	if !ok {
-		return "", nil, fmt.Errorf("JSONtoXML: field \"updates\" is not an object")
+		return nil, fmt.Errorf("JSONtoXML: field \"updates\" is not an object")
 	}
 	su3Raw, ok := updatesMap["su3"]
 	if !ok || su3Raw == nil {
-		return "", nil, fmt.Errorf("JSONtoXML: missing field \"updates.su3\"")
+		return nil, fmt.Errorf("JSONtoXML: missing field \"updates.su3\"")
 	}
 	su3, ok := su3Raw.(map[string]interface{})
 	if !ok {
-		return "", nil, fmt.Errorf("JSONtoXML: field \"updates.su3\" is not an object")
+		return nil, fmt.Errorf("JSONtoXML: field \"updates.su3\" is not an object")
+	}
+	return su3, nil
+}
+
+// extractSU3Update retrieves the torrent magnet link and the list of download
+// URL values from the su3 update section of a release JSON object. It returns
+// a descriptive error if any expected field is absent or has an unexpected type.
+func extractSU3Update(release map[string]interface{}) (magnet string, urlSlice []interface{}, err error) {
+	su3, err := navigateToSU3Map(release)
+	if err != nil {
+		return
 	}
 	magnet, err = jsonStr(su3, "torrent")
 	if err != nil {

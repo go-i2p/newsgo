@@ -111,6 +111,40 @@ func fileChecksum(path string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
+// buildDirectoryHeader generates the Markdown heading block for a directory
+// listing page: the base name of wd as the title, a ruler of equal signs, and
+// fixed preamble lines including the language-stats SVG and a bold section label.
+func buildDirectoryHeader(wd string) string {
+	base := filepath.Base(wd)
+	header := fmt.Sprintf("%s\n", base)
+	header += fmt.Sprintf("%s\n", head(len(base)))
+	header += fmt.Sprintf("%s\n", "")
+	header += fmt.Sprintf("%s\n", "![language stats](langstats.svg)")
+	header += fmt.Sprintf("%s\n", "")
+	header += fmt.Sprintf("%s\n", "**Directory Listing:**")
+	header += fmt.Sprintf("%s\n", "")
+	return header
+}
+
+// formatEntryLine produces a single Markdown list item for a directory entry.
+// For regular files the line includes the file size, permissions, and SHA-256
+// checksum; for subdirectories the checksum is omitted and a trailing slash is
+// appended to the link target. Checksum errors are logged and replaced with a
+// human-readable placeholder rather than aborting the listing.
+func formatEntryLine(wd string, entry os.DirEntry, info os.FileInfo) string {
+	log.Println(entry.Name(), entry.IsDir())
+	if entry.IsDir() {
+		return fmt.Sprintf(" - [%s](%s/) : `%d` : `%s`\n", entry.Name(), entry.Name(), info.Size(), info.Mode())
+	}
+	xname := filepath.Join(wd, entry.Name())
+	sum, err := fileChecksum(xname)
+	if err != nil {
+		log.Println("Listing error:", err)
+		sum = "(checksum unavailable)"
+	}
+	return fmt.Sprintf(" - [%s](%s) : `%d` : `%s` - `%s`\n", entry.Name(), entry.Name(), info.Size(), info.Mode(), sum)
+}
+
 // openDirectory returns a Markdown directory listing for wd. It returns an
 // error rather than calling log.Fatal so that callers inside HTTP handlers
 // can surface a proper HTTP error response instead of killing the process.
@@ -119,43 +153,15 @@ func openDirectory(wd string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("openDirectory: %w", err)
 	}
-	var readme string
 	log.Println("Navigating directory:", wd)
-	readme += fmt.Sprintf("%s\n", filepath.Base(wd))
-	readme += fmt.Sprintf("%s\n", head(len(filepath.Base(wd))))
-	readme += fmt.Sprintf("%s\n", "")
-	readme += fmt.Sprintf("%s\n", "![language stats](langstats.svg)")
-	readme += fmt.Sprintf("%s\n", "")
-	readme += fmt.Sprintf("%s\n", "**Directory Listing:**")
-	readme += fmt.Sprintf("%s\n", "")
+	readme := buildDirectoryHeader(wd)
 	for _, entry := range files {
 		info, err := entry.Info()
 		if err != nil {
 			log.Println("Listing: stat error:", err)
 			continue
 		}
-		if !entry.IsDir() {
-			// Use log.Println so this output goes through the same log
-			// destination as all other server messages (timestamped, etc.).
-			log.Println(entry.Name(), entry.IsDir())
-			xname := filepath.Join(wd, entry.Name())
-			// Stream the file through sha256 rather than reading it fully
-			// into memory.  This avoids large per-request allocations when
-			// the build directory contains multi-megabyte .su3 files.
-			sum, err := fileChecksum(xname)
-			if err != nil {
-				log.Println("Listing error:", err)
-				sum = "(checksum unavailable)"
-			}
-			// Use just the bare filename as the link href so the relative
-			// reference resolves correctly whether or not the request URL
-			// has a trailing slash.  Using filepath.Base(nwd)/filename
-			// doubled the directory segment when the URL ended with '/'.
-			readme += fmt.Sprintf(" - [%s](%s) : `%d` : `%s` - `%s`\n", entry.Name(), entry.Name(), info.Size(), info.Mode(), sum)
-		} else {
-			log.Println(entry.Name(), entry.IsDir())
-			readme += fmt.Sprintf(" - [%s](%s/) : `%d` : `%s`\n", entry.Name(), entry.Name(), info.Size(), info.Mode())
-		}
+		readme += formatEntryLine(wd, entry, info)
 	}
 	return readme, nil
 }
@@ -171,6 +177,29 @@ func head(num int) string {
 		r += "="
 	}
 	return r
+}
+
+// serveDirectory generates a Markdown directory listing for file, converts it
+// to HTML, and writes the result to rw.
+func serveDirectory(file string, rw http.ResponseWriter) error {
+	content, err := openDirectory(file)
+	if err != nil {
+		return fmt.Errorf("ServeFile: %w", err)
+	}
+	rw.Write(hTML(content)) //nolint:errcheck
+	return nil
+}
+
+// serveStaticFile reads the regular file at path and writes its contents to rw,
+// logging the filename and resolved content-type.
+func serveStaticFile(file string, ftype string, rw http.ResponseWriter) error {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("ServeFile: %s", err)
+	}
+	log.Println("ServeFile: ", file, ftype)
+	rw.Write(data) //nolint:errcheck
+	return nil
 }
 
 func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWriter) error {
@@ -195,21 +224,9 @@ func (n *NewsServer) ServeFile(file string, rq *http.Request, rw http.ResponseWr
 		return fmt.Errorf("ServeFile: stat %s: %w", file, err)
 	}
 	if f.IsDir() {
-		content, err := openDirectory(file)
-		if err != nil {
-			return fmt.Errorf("ServeFile: %w", err)
-		}
-		rw.Write(hTML(content))
-		return nil
+		return serveDirectory(file, rw)
 	}
-	bytes, err := os.ReadFile(file)
-	if err != nil {
-		return fmt.Errorf("ServeFile: %s", err)
-	}
-
-	log.Println("ServeFile: ", file, ftype)
-	rw.Write(bytes)
-	return nil
+	return serveStaticFile(file, ftype, rw)
 }
 
 func Serve(newsDir, newsStats string) *NewsServer {
