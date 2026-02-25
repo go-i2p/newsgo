@@ -140,7 +140,11 @@ func (nb *NewsBuilder) Build() (string, error) {
 	str += "<id>" + "urn:uuid:" + nb.URNID + "</id>"
 	str += "<title>" + nb.TITLE + "</title>"
 	milli := currentTime.Nanosecond() / 1_000_000
-	t := fmt.Sprintf("%d-%02d-%02dT%02d:%02d:%02d.%03d+00:00\n", currentTime.Year(), currentTime.Month(), currentTime.Day(), currentTime.Hour(), currentTime.Minute(), currentTime.Second(), milli)
+	// No trailing newline: the \n was previously injected into the element text,
+	// causing RFC-3339 parsers and strict Atom validators to reject the timestamp.
+	t := fmt.Sprintf("%d-%02d-%02dT%02d:%02d:%02d.%03d+00:00",
+		currentTime.Year(), currentTime.Month(), currentTime.Day(),
+		currentTime.Hour(), currentTime.Minute(), currentTime.Second(), milli)
 	str += "<updated>" + t + "</updated>"
 	str += "<link href=\"" + nb.SITEURL + "\"/>"
 	str += "<link href=\"" + nb.MAINFEED + "\" rel=\"self\"/>"

@@ -182,6 +182,37 @@ func TestBuild_TimestampIsUTC(t *testing.T) {
 	}
 }
 
+// TestBuild_UpdatedElementHasNoTrailingNewline verifies that the text content
+// of the <updated> element is a bare RFC-3339 timestamp with no embedded
+// newline characters within the timestamp itself.
+// The old format string contained a literal "\n" which was injected into the
+// timestamp value, causing strict Atom validators and timestamp parsers to fail.
+// Note: gohtml.Format adds surrounding whitespace indentation, so we TrimSpace
+// before checking the timestamp content.
+func TestBuild_UpdatedElementHasNoTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	nb := writeFixtures(t, dir)
+	feed, err := nb.Build()
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	// Extract the text between <updated> and </updated>.
+	start := strings.Index(feed, "<updated>")
+	end := strings.Index(feed, "</updated>")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatalf("<updated> element not found in output:\n%s", feed)
+	}
+	// gohtml.Format adds surrounding indentation; TrimSpace to isolate the value.
+	content := strings.TrimSpace(feed[start+len("<updated>") : end])
+	// The trimmed value must match the RFC-3339 millisecond pattern exactly.
+	// Any embedded newline in the timestamp (from the old \n in Sprintf) would
+	// cause this match to fail because the regex anchors to full-string match.
+	rfc3339exact := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+00:00$`)
+	if !rfc3339exact.MatchString(content) {
+		t.Errorf("<updated> text is not a clean RFC-3339 timestamp; got %q", content)
+	}
+}
+
 // TestBuild_AttributesAreQuoted verifies that the <i2p:release> element has
 // all its attribute values enclosed in double quotes, as required by XML.
 func TestBuild_AttributesAreQuoted(t *testing.T) {
