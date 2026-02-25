@@ -38,7 +38,13 @@ var signCmd = &cobra.Command{
 						return err
 					}
 					if strings.HasSuffix(path, ".atom.xml") {
-						Sign(path)
+						// Capture and log the error so that a key-load failure,
+						// su3 marshal error, or write error is visible to the
+						// operator.  The walk continues so that other feed files
+						// are still attempted, but the non-zero result is surfaced.
+						if err := Sign(path); err != nil {
+							log.Printf("Sign(%s): %v", path, err)
+						}
 					}
 					return nil
 				})

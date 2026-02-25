@@ -32,8 +32,11 @@ var buildCmd = &cobra.Command{
 					if err != nil {
 						return err
 					}
-					ext := filepath.Ext(path)
-					if ext == ".html" {
+					// Only process files named "entries.html".  Filtering by
+					// extension alone would cause index.html, error pages, and
+					// other co-located HTML files to be parsed as Atom entry
+					// sources, producing spurious or malformed output feeds.
+					if filepath.Base(path) == "entries.html" {
 						build(path)
 					}
 					return nil
@@ -113,7 +116,7 @@ func build(newsFile string) {
 		// (newsFile), not from the root directory flag (c.NewsFile).  Using
 		// c.NewsFile caused every file in the walk to map to the same output
 		// path, silently overwriting all but the last feed.
-		filename := strings.Replace(strings.Replace(strings.Replace(strings.Replace(newsFile, ".html", ".atom.xml", -1), "entries.", "news_", -1), "translations", "", -1), "news_atom", "news.atom", -1)
+		filename := outputFilename(newsFile, c.NewsFile)
 		if err := os.MkdirAll(filepath.Join(c.BuildDir, filepath.Dir(filename)), 0755); err != nil {
 			panic(err)
 		}
@@ -121,4 +124,24 @@ func build(newsFile string) {
 			panic(err)
 		}
 	}
+}
+
+// outputFilename derives the relative output path (.atom.xml) for a given
+// source entries.html path.  newsRoot is the walk start directory (c.NewsFile);
+// stripping the root prefix prevents output files from landing under a spurious
+// source-directory sub-path inside BuildDir (e.g. "build/data/news.atom.xml"
+// instead of "build/news.atom.xml").  For single-file invocations where
+// newsFile == newsRoot, only the base name is used so the result is still valid.
+func outputFilename(newsFile, newsRoot string) string {
+	rel, err := filepath.Rel(newsRoot, newsFile)
+	if err != nil || rel == "." {
+		rel = filepath.Base(newsFile)
+	}
+	f := strings.Replace(rel, ".html", ".atom.xml", -1)
+	f = strings.Replace(f, "entries.", "news_", -1)
+	// Use "translations/" (with path separator) instead of bare "translations"
+	// to avoid producing a leading separator that makes filepath.Join treat the
+	// result as an absolute path.
+	f = strings.Replace(f, "translations"+string(filepath.Separator), "", -1)
+	return strings.Replace(f, "news_atom", "news.atom", -1)
 }

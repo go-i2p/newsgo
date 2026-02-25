@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	server "github.com/go-i2p/newsgo/server"
@@ -45,7 +46,9 @@ var serveCmd = &cobra.Command{
 			}()
 		}
 		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, os.Interrupt)
+		// Register both SIGINT (Ctrl-C) and SIGTERM (systemctl stop, docker stop,
+		// Kubernetes pod termination) so stats are persisted on any graceful stop.
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 		go func() {
 			for sig := range sigCh {
 				log.Println("captured:", sig)
