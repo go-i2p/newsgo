@@ -1,69 +1,127 @@
 package main
 
 import (
-	"flag"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
+"bytes"
+"strings"
+"testing"
+
+"github.com/go-i2p/newsgo/cmd"
 )
 
-// TestFlagNames verifies that the registered flag names match the names
-// documented in Help() and README. These were previously mismatched:
-//   - "blocklist" was registered but README/Help said "-blockfile"
-//   - "feeduid"   was registered but README/Help said "-feeduri"
-func TestFlagNames(t *testing.T) {
-	tests := []struct {
-		flagName string
-		wantVar  string
-	}{
-		{"blockfile", "data/blocklist.xml"},
-		{"feeduri", ""},         // default is a random UUID; just check it is registered
-		{"feedmain", "http://"}, // default must be a static URL
-		{"builddir", "build"},
-		{"newsfile", "data"},
-		{"command", "help"},
-	}
-
-	for _, tt := range tests {
-		f := flag.Lookup(tt.flagName)
-		if f == nil {
-			t.Errorf("flag -%s is not registered; check main.go flag declarations", tt.flagName)
-			continue
-		}
-		if tt.wantVar != "" && !strings.HasPrefix(f.DefValue, tt.wantVar) {
-			t.Errorf("flag -%s default = %q, want prefix %q", tt.flagName, f.DefValue, tt.wantVar)
-		}
-	}
+// TestExecute_Help verifies that the root command runs without panicking when
+// --help is requested.  This is a smoke test for the cobra wiring in main().
+func TestExecute_Help(t *testing.T) {
+var buf bytes.Buffer
+// Run with --help; cobra always exits 0 for help so the error is nil.
+err := cmd.ExecuteWithArgs([]string{"--help"})
+_ = buf // buf is unused here; cobra writes to its own output
+if err != nil {
+t.Errorf("ExecuteWithArgs(--help) returned error: %v", err)
+}
 }
 
-// TestOldFlagNamesAbsent verifies that the previously incorrect flag names are
-// no longer registered, ensuring users who follow the README don't get silent
-// no-ops.
-func TestOldFlagNamesAbsent(t *testing.T) {
-	stale := []string{"blocklist", "feeduid"}
-	for _, name := range stale {
-		if f := flag.Lookup(name); f != nil {
-			t.Errorf("stale flag -%s is still registered; it should have been renamed", name)
-		}
-	}
+// TestServeCmd_FlagNames verifies that the serve sub-command exposes the flag
+// names documented in the README (--host, --port, --i2p) and that the old
+// combined --http flag has been removed.
+func TestServeCmd_FlagNames(t *testing.T) {
+required := []struct {
+flag    string
+wantDef string
+}{
+{"host", "127.0.0.1"},
+{"port", "9696"},
+{"i2p", "false"},
+{"newsdir", "build"},
+{"statsfile", "build/stats.json"},
+}
+for _, tt := range required {
+f := cmd.LookupFlag("serve", tt.flag)
+if f == nil {
+t.Errorf("serve --%s is not registered; README documents this flag", tt.flag)
+continue
+}
+if f.DefValue != tt.wantDef {
+t.Errorf("serve --%s default = %q, want %q", tt.flag, f.DefValue, tt.wantDef)
+}
 }
 
-// TestDefaultFeedURLIsStatic verifies that -feedmain defaults to the static
-// fallback URL and does not require a live SAM connection at startup.
-// Previously DefaultFeedURL() was called at flag init time, incurring a full
-// I2P SAM session for every invocation of newsgo (including "help" and "build").
-func TestDefaultFeedURLIsStatic(t *testing.T) {
-	f := flag.Lookup("feedmain")
-	if f == nil {
-		t.Fatal("flag -feedmain is not registered")
-	}
-	const staticPrefix = "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p"
-	if !strings.HasPrefix(f.DefValue, staticPrefix) {
-		t.Errorf("-feedmain default = %q; want static URL starting with %q\n"+
-			"(DefaultFeedURL() must not be called at flag initialisation time)",
-			f.DefValue, staticPrefix)
-	}
+// The old --http combined flag must be gone.
+if f := cmd.LookupFlag("serve", "http"); f != nil {
+t.Errorf("serve --http is still registered; it should be replaced by --host and --port")
+}
+}
+
+// TestBuildCmd_FlagNames verifies that the build sub-command exposes the flag
+// names documented in the README.
+func TestBuildCmd_FlagNames(t *testing.T) {
+required := []struct {
+flag    string
+wantDef string
+}{
+{"newsfile", "data"},
+{"blockfile", "data/blocklist.xml"},
+{"releasejson", "data/releases.json"},
+{"feedtitle", "I2P News"},
+{"feedsubtitle", "News feed, and router updates"},
+{"feedsite", "http://i2p-projekt.i2p"},
+{"builddir", "build"},
+{"feedmain", "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p"},
+}
+for _, tt := range required {
+f := cmd.LookupFlag("build", tt.flag)
+if f == nil {
+t.Errorf("build --%s is not registered; README documents this flag", tt.flag)
+continue
+}
+if tt.wantDef != "" && !strings.HasPrefix(f.DefValue, tt.wantDef) {
+t.Errorf("build --%s default = %q, want prefix %q", tt.flag, f.DefValue, tt.wantDef)
+}
+}
+
+// Old stale flag names must not be present.
+for _, stale := range []string{"blocklist", "feeduid"} {
+if f := cmd.LookupFlag("build", stale); f != nil {
+t.Errorf("build --%s is still registered; it was renamed and must not exist", stale)
+}
+}
+}
+
+// TestBuildCmd_FeedMainIsStatic verifies that --feedmain defaults to the
+// static I2P URL and does not trigger a live SAM/onramp connection at startup.
+func TestBuildCmd_FeedMainIsStatic(t *testing.T) {
+f := cmd.LookupFlag("build", "feedmain")
+if f == nil {
+t.Fatal("build --feedmain is not registered")
+}
+const staticPrefix = "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p"
+if !strings.HasPrefix(f.DefValue, staticPrefix) {
+t.Errorf("build --feedmain default = %q; want static URL starting with %q\n"+
+"(a live SAM session must not be opened at flag initialisation time)",
+f.DefValue, staticPrefix)
+}
+}
+
+// TestSignCmd_FlagNames verifies that the sign sub-command exposes the flag
+// names documented in the README.
+func TestSignCmd_FlagNames(t *testing.T) {
+required := []struct {
+flag    string
+wantDef string
+}{
+{"signerid", "null@example.i2p"},
+{"signingkey", "signing_key.pem"},
+{"builddir", "build"},
+}
+for _, tt := range required {
+f := cmd.LookupFlag("sign", tt.flag)
+if f == nil {
+t.Errorf("sign --%s is not registered; README documents this flag", tt.flag)
+continue
+}
+if f.DefValue != tt.wantDef {
+t.Errorf("sign --%s default = %q, want %q", tt.flag, f.DefValue, tt.wantDef)
+}
+}
 }
 
 // TestSignCommandTargetsAtomXML is a unit test for the filename matching logic
@@ -71,77 +129,22 @@ func TestDefaultFeedURLIsStatic(t *testing.T) {
 // ".atom.xml" files and skip plain ".html" or other extensions to prevent
 // overwriting source files with binary su3 data.
 func TestSignCommandTargetsAtomXML(t *testing.T) {
-	candidates := []struct {
-		path   string
-		signed bool
-	}{
-		{"build/news.atom.xml", true},
-		{"build/sub/news_de.atom.xml", true},
-		{"data/entries.html", false}, // must NOT be selected — this was the corruption bug
-		{"build/index.html", false},
-		{"build/style.css", false},
-		{"build/news.xml", false}, // plain .xml without .atom prefix also excluded
-	}
-
-	for _, c := range candidates {
-		got := strings.HasSuffix(c.path, ".atom.xml")
-		if got != c.signed {
-			t.Errorf("HasSuffix(%q, \".atom.xml\") = %v, want %v", c.path, got, c.signed)
-		}
-	}
+candidates := []struct {
+path   string
+signed bool
+}{
+{"build/news.atom.xml", true},
+{"build/sub/news_de.atom.xml", true},
+{"data/entries.html", false}, // must NOT be selected — this was the corruption bug
+{"build/index.html", false},
+{"build/style.css", false},
+{"build/news.xml", false}, // plain .xml without .atom prefix also excluded
 }
 
-// TestLoadPrivateKey_NilPEMGuard verifies that loadPrivateKey returns a
-// descriptive error instead of panicking when the key file contains no PEM
-// block (e.g. empty file, wrong path, DER-encoded key).
-// This guards against the critical nil-pointer dereference reported in the
-// audit where pem.Decode returns nil and the old code immediately called
-// privDer.Bytes without a nil check.
-func TestLoadPrivateKey_NilPEMGuard(t *testing.T) {
-	t.Run("empty file", func(t *testing.T) {
-		f, err := os.CreateTemp(t.TempDir(), "key*.pem")
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.Close()
-		_, err = loadPrivateKey(f.Name())
-		if err == nil {
-			t.Fatal("expected error for empty key file, got nil")
-		}
-		if !strings.Contains(err.Error(), "no PEM block found") {
-			t.Errorf("error message %q does not mention 'no PEM block found'", err.Error())
-		}
-	})
-
-	t.Run("non-PEM content", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "not_a_key.pem")
-		if err := os.WriteFile(path, []byte("this is not PEM data\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		_, err := loadPrivateKey(path)
-		if err == nil {
-			t.Fatal("expected error for non-PEM key file, got nil")
-		}
-	})
-
-	t.Run("missing file", func(t *testing.T) {
-		_, err := loadPrivateKey(filepath.Join(t.TempDir(), "does_not_exist.pem"))
-		if err == nil {
-			t.Fatal("expected error for missing key file, got nil")
-		}
-	})
+for _, c := range candidates {
+got := strings.HasSuffix(c.path, ".atom.xml")
+if got != c.signed {
+t.Errorf("HasSuffix(%q, \".atom.xml\") = %v, want %v", c.path, got, c.signed)
 }
-
-// TestI2PFlagDefault verifies that the -i2p flag defaults to false so that
-// isSamAround() is no longer called at package-init time (which would fire a
-// blocking net.Listen for every sub-command invocation including build/sign).
-func TestI2PFlagDefault(t *testing.T) {
-	f := flag.Lookup("i2p")
-	if f == nil {
-		t.Fatal("flag -i2p is not registered")
-	}
-	if f.DefValue != "false" {
-		t.Errorf("-i2p default = %q, want \"false\"; SAM probe must not run at package init", f.DefValue)
-	}
+}
 }

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	builder "github.com/go-i2p/newsgo/builder"
-	"github.com/go-i2p/onramp"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -74,17 +73,13 @@ func init() {
 }
 
 func defaultFeedURL() string {
-	if c.SamAddr == "" {
-		return "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml"
-	}
-	garlic, _ := onramp.NewGarlic("newsgo", c.SamAddr, onramp.OPT_DEFAULTS)
-	defer garlic.Close()
-	ln, err := garlic.Listen()
-	if err != nil {
-		return "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml"
-	}
-	defer ln.Close()
-	return "http://" + ln.Addr().String() + "/news.atom.xml"
+	// Always return the static fallback URL as the default.  The previous
+	// implementation called onramp.NewGarlic at flag-init time (before any
+	// flags are parsed and before c is populated), meaning c.SamAddr was
+	// always empty and the garlic Listen always failed, so the static URL
+	// was returned anyway.  Removing the live-probe eliminates an unnecessary
+	// SAM connection attempt during flag initialization.
+	return "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml"
 }
 
 func build(newsFile string) {

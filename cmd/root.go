@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-i2p/newsgo/config"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
@@ -26,6 +27,28 @@ func Execute() {
 	if err != nil {
 		os.Exit(1)
 	}
+}
+
+// ExecuteWithArgs runs the command tree with the provided argument list instead
+// of os.Args.  It is intended for use in tests where invoking specific
+// sub-commands without modifying os.Args is required.
+func ExecuteWithArgs(args []string) error {
+	rootCmd.SetArgs(args)
+	return rootCmd.Execute()
+}
+
+// LookupFlag looks up a flag on the named sub-command.  commandName must be
+// one of "serve", "build", or "sign"; use "" to look up a persistent root
+// flag.  Returns nil when the command or flag is not found.
+func LookupFlag(commandName, flagName string) *pflag.Flag {
+	if commandName == "" {
+		return rootCmd.PersistentFlags().Lookup(flagName)
+	}
+	sub, _, err := rootCmd.Find([]string{commandName})
+	if err != nil || sub == nil {
+		return nil
+	}
+	return sub.Flags().Lookup(flagName)
 }
 
 func init() {
