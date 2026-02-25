@@ -7,12 +7,15 @@ require (
 	github.com/go-i2p/onramp v0.33.92
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/wcharczuk/go-chart/v2 v2.1.2
 	github.com/yosssi/gohtml v0.0.0-20201013000340-ee4748c638f4
 	gitlab.com/golang-commonmark/markdown v0.0.0-20211110145824-bf3e522c626a
 	i2pgit.org/go-i2p/reseed-tools v0.3.11
 )
+
+replace i2pgit.org/go-i2p/reseed-tools => ../reseed-tools
 
 require (
 	github.com/cretz/bine v0.2.0 // indirect
@@ -29,7 +32,6 @@ require (
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	gitlab.com/golang-commonmark/html v0.0.0-20191124015941-a22733972181 // indirect
 	gitlab.com/golang-commonmark/linkify v0.0.0-20191026162114-a0c2df6c8f82 // indirect

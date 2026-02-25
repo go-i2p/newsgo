@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"crypto/rsa"
+	"crypto"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -77,38 +77,58 @@ func init() {
 	viper.BindPFlags(signCmd.Flags())
 }
 
-func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
+// loadPrivateKey reads a PEM-encoded private key from path and returns it as
+// a crypto.Signer. Supported formats and types:
+//   - PKCS#1 RSA ("RSA PRIVATE KEY" — openssl genrsa)
+//   - PKCS#8 RSA ("PRIVATE KEY" — openssl genpkey -algorithm RSA)
+//   - PKCS#8 ECDSA on P-256, P-384, or P-521
+//   - PKCS#8 Ed25519
+//
+// The returned value is one of *rsa.PrivateKey, *ecdsa.PrivateKey, or
+// ed25519.PrivateKey, all of which implement crypto.Signer and are accepted
+// by signer.NewsSigner and the updated su3.File.Sign.
+func loadPrivateKey(path string) (crypto.Signer, error) {
 	privPem, err := os.ReadFile(path)
-	if nil != err {
+	if err != nil {
 		return nil, err
 	}
 
 	// pem.Decode returns (nil, rest) when the input contains no PEM block
-	// (e.g. empty file, DER-encoded key, wrong file).  Accessing privDer.Bytes
-	// without this nil check causes a runtime panic.
+	// (e.g. empty file, DER-encoded key, wrong file path).
 	privDer, _ := pem.Decode(privPem)
 	if privDer == nil {
 		return nil, fmt.Errorf("loadPrivateKey: no PEM block found in %s", path)
 	}
-	privKey, err := x509.ParsePKCS1PrivateKey(privDer.Bytes)
-	if nil != err {
-		return nil, err
+
+	// Fast path: classic PKCS#1 RSAPrivateKey encoding (openssl genrsa, reseed-tools keygen).
+	if key, err := x509.ParsePKCS1PrivateKey(privDer.Bytes); err == nil {
+		return key, nil
 	}
 
-	return privKey, nil
+	// PKCS#8: covers RSA, ECDSA (P-256/384/521), and Ed25519.
+	parsed, err := x509.ParsePKCS8PrivateKey(privDer.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("loadPrivateKey: %s is not a valid PKCS#1 or PKCS#8 private key: %w", path, err)
+	}
+	key, ok := parsed.(crypto.Signer)
+	if !ok {
+		return nil, fmt.Errorf("loadPrivateKey: %s contains %T which does not implement crypto.Signer", path, parsed)
+	}
+	return key, nil
 }
 
 // Sign loads the configured private key and signs the Atom XML feed at
 // xmlfeed, producing a co-located .su3 file. It returns any error encountered
-// during key loading or su3 creation.
+// during key loading or su3 creation. Supports RSA (PKCS#1 and PKCS#8),
+// ECDSA (P-256, P-384, P-521), and Ed25519 signing keys.
 func Sign(xmlfeed string) error {
 	sk, err := loadPrivateKey(c.SigningKey)
 	if err != nil {
 		return err
 	}
-	signer := signer.NewsSigner{
+	newsSigner := signer.NewsSigner{
 		SignerID:   c.SignerId,
 		SigningKey: sk,
 	}
-	return signer.CreateSu3(xmlfeed)
+	return newsSigner.CreateSu3(xmlfeed)
 }

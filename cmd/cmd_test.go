@@ -2,6 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -282,5 +286,166 @@ func TestFetchURLs_NoStdout(t *testing.T) {
 	if captured.Len() != 0 {
 		t.Errorf("fetchURLs wrote %d bytes to stdout; want 0\ncaptured: %s",
 			captured.Len(), captured.String())
+	}
+}
+
+// writePKCS1PEM generates an RSA key, encodes it as PKCS#1 PEM, writes it to
+// a temp file, and returns the path.  This is the "openssl genrsa" format.
+func writePKCS1PEM(t *testing.T, bits int) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+	block := &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}
+	path := filepath.Join(t.TempDir(), "pkcs1.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatalf("write PKCS#1 PEM: %v", err)
+	}
+	return path
+}
+
+// writePKCS8PEM generates an RSA key, encodes it as PKCS#8 PEM, writes it to
+// a temp file, and returns the path.  This is the "openssl genpkey" default.
+func writePKCS8PEM(t *testing.T, bits int) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("MarshalPKCS8PrivateKey: %v", err)
+	}
+	block := &pem.Block{Type: "PRIVATE KEY", Bytes: der}
+	path := filepath.Join(t.TempDir(), "pkcs8.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatalf("write PKCS#8 PEM: %v", err)
+	}
+	return path
+}
+
+// writeECPKCS8PEM generates an ECDSA P-256 key wrapped in PKCS#8 PEM and
+// returns its path.
+func writeECPKCS8PEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("MarshalPKCS8PrivateKey(ec): %v", err)
+	}
+	block := &pem.Block{Type: "PRIVATE KEY", Bytes: der}
+	path := filepath.Join(t.TempDir(), "ec_pkcs8.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatalf("write EC PKCS#8 PEM: %v", err)
+	}
+	return path
+}
+
+// writeEd25519PEM generates an Ed25519 key wrapped in PKCS#8 PEM and returns
+// its path.
+func writeEd25519PEM(t *testing.T) string {
+	t.Helper()
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("MarshalPKCS8PrivateKey(ed25519): %v", err)
+	}
+	block := &pem.Block{Type: "PRIVATE KEY", Bytes: der}
+	path := filepath.Join(t.TempDir(), "ed25519.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatalf("write Ed25519 PKCS#8 PEM: %v", err)
+	}
+	return path
+}
+
+// TestLoadPrivateKey_PKCS1 verifies that a PKCS#1 RSA key ("openssl genrsa")
+// is still loaded successfully after the PKCS#8 fallback was added.
+func TestLoadPrivateKey_PKCS1(t *testing.T) {
+	path := writePKCS1PEM(t, 2048)
+	key, err := loadPrivateKey(path)
+	if err != nil {
+		t.Fatalf("loadPrivateKey (PKCS#1) returned unexpected error: %v", err)
+	}
+	if key == nil {
+		t.Fatal("loadPrivateKey (PKCS#1) returned nil key without error")
+	}
+}
+
+// TestLoadPrivateKey_PKCS8RSA verifies that a PKCS#8-wrapped RSA key
+// ("openssl genpkey -algorithm RSA", Go x509.MarshalPKCS8PrivateKey) is now
+// accepted.  This test would have failed before the fix.
+func TestLoadPrivateKey_PKCS8RSA(t *testing.T) {
+	path := writePKCS8PEM(t, 2048)
+	key, err := loadPrivateKey(path)
+	if err != nil {
+		t.Fatalf("loadPrivateKey (PKCS#8 RSA) returned unexpected error: %v", err)
+	}
+	if key == nil {
+		t.Fatal("loadPrivateKey (PKCS#8 RSA) returned nil key without error")
+	}
+}
+
+// TestLoadPrivateKey_PKCS8EC verifies that a PKCS#8 ECDSA P-256 key is loaded
+// successfully and returned as a crypto.Signer backed by *ecdsa.PrivateKey.
+// This test would have failed before the su3 library was updated to support
+// ECDSA signing.
+func TestLoadPrivateKey_PKCS8EC(t *testing.T) {
+	path := writeECPKCS8PEM(t)
+	key, err := loadPrivateKey(path)
+	if err != nil {
+		t.Fatalf("loadPrivateKey (PKCS#8 ECDSA) returned unexpected error: %v", err)
+	}
+	if key == nil {
+		t.Fatal("loadPrivateKey (PKCS#8 ECDSA) returned nil key without error")
+	}
+	if _, ok := key.(*ecdsa.PrivateKey); !ok {
+		t.Errorf("expected *ecdsa.PrivateKey, got %T", key)
+	}
+}
+
+// TestLoadPrivateKey_Ed25519 verifies that a PKCS#8 Ed25519 key is loaded
+// successfully and returned as a crypto.Signer backed by ed25519.PrivateKey.
+func TestLoadPrivateKey_Ed25519(t *testing.T) {
+	path := writeEd25519PEM(t)
+	key, err := loadPrivateKey(path)
+	if err != nil {
+		t.Fatalf("loadPrivateKey (Ed25519) returned unexpected error: %v", err)
+	}
+	if key == nil {
+		t.Fatal("loadPrivateKey (Ed25519) returned nil key without error")
+	}
+	if _, ok := key.(ed25519.PrivateKey); !ok {
+		t.Errorf("expected ed25519.PrivateKey, got %T", key)
+	}
+}
+
+// TestLoadPrivateKey_AllTypesImplementCryptoSigner verifies that every key
+// type returned by loadPrivateKey satisfies the crypto.Signer interface, which
+// is required by signer.NewsSigner.SigningKey and su3.File.Sign.
+func TestLoadPrivateKey_AllTypesImplementCryptoSigner(t *testing.T) {
+	paths := map[string]string{
+		"PKCS#1 RSA":   writePKCS1PEM(t, 2048),
+		"PKCS#8 RSA":   writePKCS8PEM(t, 2048),
+		"PKCS#8 ECDSA": writeECPKCS8PEM(t),
+		"Ed25519":      writeEd25519PEM(t),
+	}
+	for name, path := range paths {
+		t.Run(name, func(t *testing.T) {
+			key, err := loadPrivateKey(path)
+			if err != nil {
+				t.Fatalf("loadPrivateKey: %v", err)
+			}
+			var _ crypto.Signer = key // compile-time + runtime interface check
+		})
 	}
 }
