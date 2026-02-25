@@ -97,6 +97,212 @@ func TestNoListenerConfigured(t *testing.T) {
 	}
 }
 
+// TestResolveOverrideFile validates the "platform-specific overrides global
+// when present" helper used for both releases.json and blocklist.xml.
+func TestResolveOverrideFile(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "exists.xml")
+	if err := os.WriteFile(existing, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "absent.xml")
+	global := filepath.Join(dir, "global.xml")
+
+	t.Run("returns platform path when it exists", func(t *testing.T) {
+		got := resolveOverrideFile(existing, global)
+		if got != existing {
+			t.Errorf("resolveOverrideFile(%q, %q) = %q; want %q", existing, global, got, existing)
+		}
+	})
+	t.Run("returns global fallback when platform path absent", func(t *testing.T) {
+		got := resolveOverrideFile(missing, global)
+		if got != global {
+			t.Errorf("resolveOverrideFile(%q, %q) = %q; want %q", missing, global, got, global)
+		}
+	})
+}
+
+// makeMinimalDataDir creates the minimum files needed for a successful build
+// under dataRoot (global) and optionally a platform sub-directory.
+// releasesJSON and blocklistXML are written to whichever of root/platform is
+// requested via the boolean flags.  Returns the root and platform dir paths.
+func makeMinimalDataDir(t *testing.T, platform, status string,
+	platformReleasesJSON, platformBlocklist bool,
+) (root, platDir string) {
+	t.Helper()
+	root = t.TempDir()
+	const minReleasesJSON = `[{"date":"2025-01-01","version":"2.0.0","minVersion":"0.9.9","minJavaVersion":"1.8","updates":{"su3":{"torrent":"magnet:?xt=urn:btih:abc","url":["http://example.com/update.su3"]}}}]`
+	const entriesHTML = `<html><body><header>H</header><article id="urn:1" title="T" href="http://x.com" author="A" published="2025-01-01" updated="2025-01-02"><details><summary>S</summary></details><p>B</p></article></body></html>`
+
+	// Always write global files.
+	must(t, os.WriteFile(filepath.Join(root, "entries.html"), []byte(entriesHTML), 0o644))
+	must(t, os.WriteFile(filepath.Join(root, "releases.json"), []byte(minReleasesJSON), 0o644))
+	must(t, os.WriteFile(filepath.Join(root, "blocklist.xml"), []byte(""), 0o644))
+
+	platDir = filepath.Join(root, platform, status)
+	if err := os.MkdirAll(platDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if platformReleasesJSON {
+		must(t, os.WriteFile(filepath.Join(platDir, "releases.json"), []byte(minReleasesJSON), 0o644))
+	}
+	if platformBlocklist {
+		must(t, os.WriteFile(filepath.Join(platDir, "blocklist.xml"), []byte(""), 0o644))
+	}
+	return root, platDir
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBuildPlatform_UsesGlobalReleasesWhenPlatformAbsent verifies that a
+// platform directory without a releases.json still produces output (using the
+// global releases.json as fallback) instead of being silently skipped.
+func TestBuildPlatform_UsesGlobalReleasesWhenPlatformAbsent(t *testing.T) {
+	root, _ := makeMinimalDataDir(t, "mac", "stable", false /*no platform releases*/, false)
+	buildDir := t.TempDir()
+
+	prev := *c
+	defer func() { *c = prev }()
+	c.NewsFile = root
+	c.ReleaseJsonFile = filepath.Join(root, "releases.json")
+	c.BlockList = filepath.Join(root, "blocklist.xml")
+	c.BuildDir = buildDir
+	c.FeedTitle = "Test"
+	c.FeedSite = "http://example.com"
+	c.FeedMain = "http://example.com/news.atom.xml"
+	c.FeedBackup = ""
+	c.FeedSubtitle = "sub"
+	c.FeedUuid = "00000000-0000-0000-0000-000000000001"
+	c.TranslationsDir = ""
+
+	buildPlatform("mac", "stable")
+
+	out := filepath.Join(buildDir, "mac", "stable", "news.atom.xml")
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("expected %s to be produced when platform releases.json absent (global fallback); stat: %v", out, err)
+	}
+}
+
+// TestBuildPlatform_UsesPlatformBlocklistWhenPresent verifies that the feed
+// is built using the platform-specific blocklist.xml when it exists in the
+// platform data directory, not the global one.
+func TestBuildPlatform_UsesPlatformBlocklistWhenPresent(t *testing.T) {
+	root, platDir := makeMinimalDataDir(t, "win", "beta", true /*platform releases*/, true /*platform blocklist*/)
+	buildDir := t.TempDir()
+
+	prev := *c
+	defer func() { *c = prev }()
+	c.NewsFile = root
+	c.ReleaseJsonFile = filepath.Join(root, "releases.json")
+	c.BlockList = filepath.Join(root, "blocklist.xml")
+	c.BuildDir = buildDir
+	c.FeedTitle = "Test"
+	c.FeedSite = "http://example.com"
+	c.FeedMain = "http://example.com/news.atom.xml"
+	c.FeedBackup = ""
+	c.FeedSubtitle = "sub"
+	c.FeedUuid = "00000000-0000-0000-0000-000000000002"
+	c.TranslationsDir = ""
+
+	// Ensure we can detect which blocklist is resolved by checking the file is
+	// the platform one; resolveOverrideFile is the gating function.
+	got := resolveOverrideFile(
+		filepath.Join(platDir, "blocklist.xml"),
+		filepath.Join(root, "blocklist.xml"),
+	)
+	if got != filepath.Join(platDir, "blocklist.xml") {
+		t.Errorf("resolveOverrideFile preferred global blocklist over present platform blocklist; got %q", got)
+	}
+
+	buildPlatform("win", "beta")
+	out := filepath.Join(buildDir, "win", "beta", "news.atom.xml")
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("expected %s to be produced; stat: %v", out, err)
+	}
+}
+
+// TestBuildPlatform_SkipsMissingDirectory verifies that a (platform, status)
+// combination whose data directory does not exist is silently skipped —
+// no output file is created and no fatal error occurs.
+func TestBuildPlatform_SkipsMissingDirectory(t *testing.T) {
+	root := t.TempDir()
+	buildDir := t.TempDir()
+
+	prev := *c
+	defer func() { *c = prev }()
+	c.NewsFile = root
+	c.ReleaseJsonFile = filepath.Join(root, "releases.json")
+	c.BlockList = ""
+	c.BuildDir = buildDir
+	c.FeedUuid = "00000000-0000-0000-0000-000000000003"
+
+	buildPlatform("android", "stable") // data/android/stable does not exist
+
+	out := filepath.Join(buildDir, "android", "stable", "news.atom.xml")
+	if _, err := os.Stat(out); err == nil {
+		t.Errorf("expected no output for absent directory android/stable, but %s was created", out)
+	}
+}
+
+// TestBuildPlatform_GlobalEntriesMergedIntoPlatformFeed verifies that when a
+// platform has its own entries.html, the global jar-feed articles are merged
+// into the output (Feed.BaseEntriesHTMLPath == canonical global entries).
+// This is verified by checking that the output Atom XML contains the article
+// ID from the global entries file.
+func TestBuildPlatform_GlobalEntriesMergedIntoPlatformFeed(t *testing.T) {
+	root := t.TempDir()
+	buildDir := t.TempDir()
+
+	const releasesJSON = `[{"date":"2025-01-01","version":"2.0.0","minVersion":"0.9.9","minJavaVersion":"1.8","updates":{"su3":{"torrent":"magnet:?xt=urn:btih:abc","url":["http://example.com/update.su3"]}}}]`
+	// Global entry has id "urn:global:1".
+	globalEntries := `<html><body><header>H</header><article id="urn:global:1" title="Global" href="http://g.com" author="Au" published="2025-01-01" updated="2025-01-01"><details><summary>S</summary></details><p>global</p></article></body></html>`
+	// Platform entry has id "urn:plat:1".
+	platEntries := `<html><body><header>H</header><article id="urn:plat:1" title="Plat" href="http://p.com" author="Au" published="2025-01-02" updated="2025-01-02"><details><summary>PS</summary></details><p>plat</p></article></body></html>`
+
+	must(t, os.WriteFile(filepath.Join(root, "entries.html"), []byte(globalEntries), 0o644))
+	must(t, os.WriteFile(filepath.Join(root, "releases.json"), []byte(releasesJSON), 0o644))
+	must(t, os.WriteFile(filepath.Join(root, "blocklist.xml"), []byte(""), 0o644))
+
+	platDir := filepath.Join(root, "mac", "stable")
+	must(t, os.MkdirAll(platDir, 0o755))
+	must(t, os.WriteFile(filepath.Join(platDir, "entries.html"), []byte(platEntries), 0o644))
+	must(t, os.WriteFile(filepath.Join(platDir, "releases.json"), []byte(releasesJSON), 0o644))
+
+	prev := *c
+	defer func() { *c = prev }()
+	c.NewsFile = root
+	c.ReleaseJsonFile = filepath.Join(root, "releases.json")
+	c.BlockList = filepath.Join(root, "blocklist.xml")
+	c.BuildDir = buildDir
+	c.FeedTitle = "Test"
+	c.FeedSite = "http://example.com"
+	c.FeedMain = "http://example.com/news.atom.xml"
+	c.FeedBackup = ""
+	c.FeedSubtitle = "sub"
+	c.FeedUuid = "00000000-0000-0000-0000-000000000004"
+	c.TranslationsDir = ""
+
+	buildPlatform("mac", "stable")
+
+	out := filepath.Join(buildDir, "mac", "stable", "news.atom.xml")
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("expected output file %s; stat: %v", out, err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "urn:global:1") {
+		t.Errorf("global entry urn:global:1 missing from platform feed; feed:\n%s", content)
+	}
+	if !strings.Contains(content, "urn:plat:1") {
+		t.Errorf("platform entry urn:plat:1 missing from platform feed; feed:\n%s", content)
+	}
+}
+
 // TestOutputFilename validates that build output paths are computed relative to
 // the walk root so that source-directory components (e.g. "data/") are not
 // propagated into BuildDir.

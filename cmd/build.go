@@ -98,39 +98,90 @@ func defaultFeedURL() string {
 	return "http://tc73n4kivdroccekirco7rhgxdg5f3cjvbaapabupeyzrqwv5guq.b32.i2p/news.atom.xml"
 }
 
+// resolveOverrideFile returns platformPath when that file exists, otherwise
+// returns globalFallback.  It encodes the "platform-specific file overrides
+// the global file, but only when present" policy used for both releases.json
+// and blocklist.xml.
+func resolveOverrideFile(platformPath, globalFallback string) string {
+	if _, err := os.Stat(platformPath); err == nil {
+		return platformPath
+	}
+	return globalFallback
+}
+
 // buildPlatform builds all feeds (canonical English + locale variants) for a
 // single (platform, status) combination.  When platform is empty or "linux",
 // the top-level data directory is used (preserving the existing default
-// behaviour).  Combinations whose data directory does not contain a
-// releases.json are silently skipped with a log.Printf.
+// behaviour).
+//
+// Opt-in rule for non-default platforms: the platform data directory must
+// exist — this is the operator's signal that the platform is configured.
+// Within that directory, releases.json and blocklist.xml are optional
+// override files; absent files fall back to their global counterparts so
+// that the global (jar) newsfeed content is always the baseline.
+//
+// Articles from the global (jar) feed are merged into every per-platform
+// feed: when a platform-specific entries.html exists it is loaded first and
+// the global entries.html is appended via Feed.BaseEntriesHTMLPath; when no
+// platform entries.html is present the global file is used directly.
 func buildPlatform(platform, status string) {
 	dataDir := builder.PlatformDataDir(c.NewsFile, platform, status)
 	isDefault := platform == "" || platform == "linux"
 
-	// Determine the releases.json path.  For the default (Linux) tree honour
-	// the explicit --releasejson flag so that single-directory invocations
-	// without --platform/--status remain identical to the current behaviour.
-	// For all other platforms use the per-directory releases.json.
+	// For non-default platforms the data directory must exist; a missing
+	// directory means the combination has not been set up yet — skip silently.
+	if !isDefault {
+		if _, err := os.Stat(dataDir); err != nil {
+			return
+		}
+	}
+
+	// Resolve releases.json.
+	// Default tree: honour the explicit --releasejson flag unchanged.
+	// Platform tree: use the platform-specific file when present; fall back
+	// to the global releases.json so the jar feed is always the baseline.
 	var releasesPath string
 	if isDefault {
 		releasesPath = c.ReleaseJsonFile
 	} else {
-		releasesPath = filepath.Join(dataDir, "releases.json")
+		releasesPath = resolveOverrideFile(
+			filepath.Join(dataDir, "releases.json"),
+			c.ReleaseJsonFile,
+		)
 	}
+	// Gate: the resolved releases.json must actually exist.
 	if _, err := os.Stat(releasesPath); err != nil {
 		if isDefault {
 			log.Printf("build: skipping default tree: releases.json not found at %s", releasesPath)
 		} else {
-			log.Printf("build: skipping %s/%s: no releases.json found", platform, status)
+			log.Printf("build: skipping %s/%s: no releases.json found (platform or global)", platform, status)
 		}
 		return
 	}
 
+	// Resolve blocklist.xml.
+	// Platform-specific blocklist overrides the global one when present;
+	// otherwise the global (jar) blocklist is used as the baseline.
+	var blocklistPath string
+	if isDefault {
+		blocklistPath = c.BlockList
+	} else {
+		blocklistPath = resolveOverrideFile(
+			filepath.Join(dataDir, "blocklist.xml"),
+			c.BlockList,
+		)
+	}
+
 	canonicalEntries := filepath.Join(c.NewsFile, "entries.html")
 
-	// Determine the entries.html to use as the source for the canonical feed.
-	// For non-default platforms, prefer a platform-specific overlay when one
-	// exists; fall back to the top-level canonical file otherwise.
+	// Determine the entries.html to use as the primary source for the
+	// canonical English feed.
+	// For non-default platforms: use the platform-specific overlay when it
+	// exists; otherwise fall back to the global canonical file.
+	// The global entries are always merged in via Feed.BaseEntriesHTMLPath
+	// inside buildForPlatform whenever the primary source differs from the
+	// global canonical file, ensuring that jar-feed articles are always
+	// present in every per-platform output.
 	entriesPath := canonicalEntries
 	if !isDefault {
 		platformEntries := filepath.Join(dataDir, "entries.html")
@@ -158,20 +209,26 @@ func buildPlatform(platform, status string) {
 	}
 
 	// Build canonical English feed.
-	buildForPlatform(entriesPath, dataDir, releasesPath, canonicalEntries, platform, status)
+	buildForPlatform(entriesPath, dataDir, releasesPath, blocklistPath, canonicalEntries, platform, status)
 
 	// Build per-locale feeds.
 	for _, tf := range builder.DetectTranslationFiles(transDir) {
-		buildForPlatform(tf, dataDir, releasesPath, canonicalEntries, platform, status)
+		buildForPlatform(tf, dataDir, releasesPath, blocklistPath, canonicalEntries, platform, status)
 	}
 }
 
 // buildForPlatform is the per-file build step used by buildPlatform.  It is
 // analogous to the existing build() function but accepts explicit dataDir,
-// releasesPath, and platform/status parameters instead of reading them from
-// the global config directly.
-func buildForPlatform(newsFile, dataDir, releasesPath, canonicalEntries, platform, status string) {
-	news := builder.Builder(newsFile, releasesPath, c.BlockList)
+// releasesPath, blocklistPath, and platform/status parameters instead of
+// reading them from the global config directly.
+//
+// blocklistPath is the already-resolved blocklist file (platform-specific when
+// present, global jar-feed blocklist otherwise); releasesPath likewise.
+// canonicalEntries is the global jar-feed entries.html; it is set as
+// Feed.BaseEntriesHTMLPath whenever newsFile differs from it so that global
+// articles are always merged into the per-platform output.
+func buildForPlatform(newsFile, dataDir, releasesPath, blocklistPath, canonicalEntries, platform, status string) {
+	news := builder.Builder(newsFile, releasesPath, blocklistPath)
 	news.Language = builder.LocaleFromPath(newsFile)
 	news.TITLE = c.FeedTitle
 	news.SITEURL = c.FeedSite
