@@ -47,7 +47,6 @@ var buildCmd = &cobra.Command{
 		} else {
 			build(c.NewsFile)
 		}
-
 	},
 }
 
@@ -72,7 +71,6 @@ func init() {
 	// re-register it here — pflag panics on duplicate flag definitions.
 
 	viper.BindPFlags(buildCmd.Flags())
-
 }
 
 func defaultFeedURL() string {
@@ -117,10 +115,10 @@ func build(newsFile string) {
 		// c.NewsFile caused every file in the walk to map to the same output
 		// path, silently overwriting all but the last feed.
 		filename := outputFilename(newsFile, c.NewsFile)
-		if err := os.MkdirAll(filepath.Join(c.BuildDir, filepath.Dir(filename)), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(c.BuildDir, filepath.Dir(filename)), 0o755); err != nil {
 			panic(err)
 		}
-		if err = os.WriteFile(filepath.Join(c.BuildDir, filename), []byte(feed), 0644); err != nil {
+		if err = os.WriteFile(filepath.Join(c.BuildDir, filename), []byte(feed), 0o644); err != nil {
 			panic(err)
 		}
 	}

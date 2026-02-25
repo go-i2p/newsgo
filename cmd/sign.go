@@ -54,7 +54,6 @@ var signCmd = &cobra.Command{
 		} else {
 			Sign(c.BuildDir)
 		}
-
 	},
 }
 

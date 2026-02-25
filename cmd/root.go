@@ -11,8 +11,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-var cfgFile string
-var c *config.Conf = &config.Conf{}
+var (
+	cfgFile string
+	c       *config.Conf = &config.Conf{}
+)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -84,5 +86,4 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 	}
-
 }
