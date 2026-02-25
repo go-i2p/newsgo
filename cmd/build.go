@@ -137,7 +137,7 @@ func resolveOverrideFile(platformPath, globalFallback string) string {
 // platform entries.html is present the global file is used directly.
 func buildPlatform(platform, status string) {
 	dataDir := builder.PlatformDataDir(c.NewsFile, platform, status)
-	isDefault := platform == "" || platform == "linux"
+	isDefault := platform == ""
 
 	// For non-default platforms the data directory must exist; a missing
 	// directory means the combination has not been set up yet — skip silently.
@@ -320,14 +320,17 @@ func build(newsFile string) {
 }
 
 // outputFilenameForPlatform calls outputFilename and prepends the
-// platform/status sub-path when platform is non-empty and not "linux".
+// platform/status sub-path when a named platform is specified.  An empty
+// platform (the default tree) returns the bare base name.  All named
+// platforms — including "linux" — get a platform/status/ prefix so that
+// their outputs are distinct from each other and from the default feed.
 // newsRoot should be the platform-specific data directory (dataDir) so that
 // outputFilename produces a path relative to that directory; the
 // platform/status prefix is then prepended to place the file in the correct
 // sub-tree of BuildDir.
 func outputFilenameForPlatform(newsFile, newsRoot, platform, status string) string {
 	base := outputFilename(newsFile, newsRoot)
-	if platform == "" || platform == "linux" {
+	if platform == "" {
 		return base
 	}
 	return filepath.Join(platform, status, base)

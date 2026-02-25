@@ -424,12 +424,16 @@ func TestOutputFilenameForPlatform(t *testing.T) {
 			want:     "news.atom.xml",
 		},
 		{
-			name:     "linux platform — treated as default, no prefix",
-			newsFile: filepath.Join("data", "entries.html"),
-			newsRoot: "data",
+			// "linux" is now a first-class platform: its output is prefixed
+			// with "linux/<status>/" so that different statuses produce
+			// distinct files.  The pre-fix code returned the bare base name
+			// for "linux", making --status invisible for this platform.
+			name:     "linux platform — first-class, has platform/status prefix",
+			newsFile: filepath.Join("data", "linux", "stable", "entries.html"),
+			newsRoot: filepath.Join("data", "linux", "stable"),
 			platform: "linux",
 			status:   "stable",
-			want:     "news.atom.xml",
+			want:     filepath.Join("linux", "stable", "news.atom.xml"),
 		},
 		{
 			name:     "mac/stable canonical feed",
@@ -1038,5 +1042,59 @@ func TestSingleFileBuild_ProducesOutput(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "urn:single:1") {
 		t.Errorf("output %s does not contain expected article id 'urn:single:1'; content:\n%s", out, string(data))
+	}
+}
+
+// TestOutputFilenameForPlatform_LinuxHasPlatformStatusPrefix verifies that
+// "linux" is now treated as a first-class platform: the output filename is
+// prefixed with "linux/<status>/" rather than being the bare base name.
+// This ensures --platform linux --status stable produces a distinct output
+// from the unnamed default tree.
+func TestOutputFilenameForPlatform_LinuxHasPlatformStatusPrefix(t *testing.T) {
+	newsFile := filepath.Join("data", "linux", "stable", "entries.html")
+	newsRoot := filepath.Join("data", "linux", "stable")
+
+	got := outputFilenameForPlatform(newsFile, newsRoot, "linux", "stable")
+	want := filepath.Join("linux", "stable", "news.atom.xml")
+	if got != want {
+		t.Errorf("outputFilenameForPlatform(%q, %q, \"linux\", \"stable\") = %q; want %q",
+			newsFile, newsRoot, got, want)
+	}
+}
+
+// TestOutputFilenameForPlatform_LinuxStableVsBeta verifies that different
+// status values produce distinct output paths for the linux platform.  Before
+// the fix both calls returned the same bare "news.atom.xml", rendering the
+// --status flag meaningless for linux.
+func TestOutputFilenameForPlatform_LinuxStableVsBeta(t *testing.T) {
+	stableEntries := filepath.Join("data", "linux", "stable", "entries.html")
+	betaEntries := filepath.Join("data", "linux", "beta", "entries.html")
+
+	stable := outputFilenameForPlatform(stableEntries, filepath.Join("data", "linux", "stable"), "linux", "stable")
+	beta := outputFilenameForPlatform(betaEntries, filepath.Join("data", "linux", "beta"), "linux", "beta")
+
+	if stable == beta {
+		t.Errorf("linux/stable and linux/beta produced the same output path %q; they must differ", stable)
+	}
+	if !strings.Contains(stable, "stable") {
+		t.Errorf("linux/stable output %q does not contain 'stable'", stable)
+	}
+	if !strings.Contains(beta, "beta") {
+		t.Errorf("linux/beta output %q does not contain 'beta'", beta)
+	}
+}
+
+// TestOutputFilenameForPlatform_EmptyPlatformNoPrefix verifies that the empty
+// platform (the unnamed default tree) still produces a bare base name with no
+// platform/status prefix, preserving backward compatibility.
+func TestOutputFilenameForPlatform_EmptyPlatformNoPrefix(t *testing.T) {
+	newsFile := filepath.Join("data", "entries.html")
+	newsRoot := "data"
+
+	got := outputFilenameForPlatform(newsFile, newsRoot, "", "")
+	want := "news.atom.xml"
+	if got != want {
+		t.Errorf("outputFilenameForPlatform(%q, %q, \"\", \"\") = %q; want %q",
+			newsFile, newsRoot, got, want)
 	}
 }

@@ -6,24 +6,19 @@ import (
 )
 
 // TestKnownPlatforms verifies that KnownPlatforms returns the full canonical
-// set in a deterministic order with no duplicates, and that "linux" is NOT
-// included because it maps to the same data directory as the default ("") entry
-// and would produce redundant, overwriting build iterations.
+// set in a deterministic order with no duplicates.  "linux" is now included
+// as a first-class platform: it maps to data/linux/<status>/ rather than to
+// the top-level data directory, so per-status Linux feeds are distinct from
+// each other and from the unnamed default tree.
 func TestKnownPlatforms(t *testing.T) {
 	got := KnownPlatforms()
-	want := []string{"mac", "mac-arm64", "win", "android", "ios"}
+	want := []string{"linux", "mac", "mac-arm64", "win", "android", "ios"}
 	if len(got) != len(want) {
 		t.Fatalf("KnownPlatforms() returned %d items; want %d: %v", len(got), len(want), got)
 	}
 	for i, p := range want {
 		if got[i] != p {
 			t.Errorf("KnownPlatforms()[%d] = %q; want %q", i, got[i], p)
-		}
-	}
-	// Explicitly confirm "linux" is absent — it is covered by the default ("") tree.
-	for _, p := range got {
-		if p == "linux" {
-			t.Error("KnownPlatforms() must not include \"linux\": it is an alias for the default tree and would cause duplicate builds")
 		}
 	}
 }
@@ -61,15 +56,15 @@ func TestPlatformDataDir(t *testing.T) {
 			want:     "data",
 		},
 		{
-			// PlatformDataDir still accepts "linux" as a caller-supplied value for
-			// backward compatibility; it maps to the same top-level dataRoot so
-			// that explicit callers are not broken.  KnownPlatforms() no longer
-			// yields "linux" so the build loop never generates this pair itself.
-			name:     "linux maps to dataRoot for backward compat",
+			// "linux" is now a first-class platform: it maps to
+			// dataRoot/linux/<status>/ just like "mac" or "win".  This allows
+			// --platform linux --status stable to produce a distinct output from
+			// --platform linux --status beta.
+			name:     "linux maps to its own sub-directory",
 			dataRoot: "data",
 			platform: "linux",
 			status:   "stable",
-			want:     "data",
+			want:     filepath.Join("data", "linux", "stable"),
 		},
 		{
 			name:     "mac/stable sub-directory",
@@ -98,6 +93,16 @@ func TestPlatformDataDir(t *testing.T) {
 			platform: "android",
 			status:   "stable",
 			want:     filepath.Join("data", "android", "stable"),
+		},
+		{
+			// Verify that linux/stable and linux/beta map to distinct dirs.
+			// This covers the pre-fix regression where both mapped to "data",
+			// causing --platform linux --status beta to overwrite the stable feed.
+			name:     "linux/beta is distinct from linux/stable",
+			dataRoot: "data",
+			platform: "linux",
+			status:   "beta",
+			want:     filepath.Join("data", "linux", "beta"),
 		},
 	}
 	for _, tt := range tests {
