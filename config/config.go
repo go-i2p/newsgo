@@ -46,10 +46,16 @@ type Conf struct {
 	TranslationsDir string `mapstructure:"translationsdir"`
 	SignerId        string `mapstructure:"signerid"`
 	SigningKey      string `mapstructure:"signingkey"`
-	// KeystorePass is the password used to open a Java KeyStore or PKCS#12
-	// file passed via --signingkey.  Leave empty for PEM keys or unprotected
-	// keystores.
+	// KeystorePass is the JKS/PKCS12 *store* password — the password that
+	// unlocks the keystore container itself.  For keystores created by I2P
+	// (KeyStoreUtil / SU3File) this is always "changeit".  Leave empty to use
+	// that default.  Corresponds to the -p flag of SU3File.
 	KeystorePass string `mapstructure:"keystorepass"`
+	// KeyEntryPass is the *key entry* password — the password that unlocks the
+	// specific private key inside the JKS.  This is what I2P prompts for
+	// interactively (keypw in SU3File / bulkSignCLI) and what should be stored
+	// as KSPASS in su3.vars.  Corresponds to --keyentrypass on the CLI.
+	KeyEntryPass string `mapstructure:"keyentrypass"`
 
 	// Fetch subcommand options.
 

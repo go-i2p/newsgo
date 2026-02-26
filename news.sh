@@ -36,9 +36,13 @@ set -e
 NEWSGO="${NEWSGO:-newsgo}"
 BUILDDIR="${BUILDDIR:-./build}"
 DATADIR="${DATADIR:-./data}"
-# Keystore password — passed to newsgo via --keystorepass.
-# Leave empty for PEM keys or unprotected keystores.
+# Key entry password for Java KeyStore / PKCS#12 files.
+# This is the password I2P's SU3File prompts for interactively (keypw),
+# stored as KSPASS in su3.vars.  It unlocks the private key entry inside
+# the keystore.  The keystore store password defaults to "changeit"
+# (I2P's KeyStoreUtil.DEFAULT_KEYSTORE_PASSWORD); override via KSTOREPW.
 KSPASS="${KSPASS:-}"
+KSTOREPW="${KSTOREPW:-}"  # leave empty to use "changeit"
 
 final_generate_signed_feeds() {
     echo "Building Atom XML newsfeeds..."
@@ -50,10 +54,11 @@ final_generate_signed_feeds() {
 
     echo "Signing newsfeeds..."
     "$NEWSGO" sign \
-        --builddir    "$BUILDDIR" \
-        --signingkey  "$KS" \
-        --signerid    "$SIGNER" \
-        --keystorepass "$KSPASS"
+        --builddir     "$BUILDDIR" \
+        --signingkey   "$KS" \
+        --signerid     "$SIGNER" \
+        --keystorepass "$KSTOREPW" \
+        --keyentrypass "$KSPASS"
 
     echo
     ls -l "$BUILDDIR"

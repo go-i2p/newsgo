@@ -1,3 +1,18 @@
+^build
+^env
+^etc/.*.custom
+# Accidentally checking in a working transifexrc would be extremely bad!
+.transifexrc
+^logs
+build
+logs
+etc/*custom*
+build.old
+/certificates
+/blocklist.txt
+news.su3
+news.xml
+
 /newsgo
 /onionkeys
 /i2pkeys

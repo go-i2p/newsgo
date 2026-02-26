@@ -77,7 +77,8 @@ func init() {
 
 	signCmd.Flags().String("signerid", "null@example.i2p", "ID to use when signing the news")
 	signCmd.Flags().String("signingkey", "signing_key.pem", "Path to a PEM private key, Java KeyStore (.ks/.jks), or PKCS#12 (.p12/.pfx) file")
-	signCmd.Flags().String("keystorepass", "", "Password for a Java KeyStore or PKCS#12 file (leave empty for PEM keys or unprotected keystores)")
+	signCmd.Flags().String("keystorepass", "", "JKS/PKCS12 store password (default \"changeit\" for I2P keystores; leave empty to use that default)")
+	signCmd.Flags().String("keyentrypass", "", "JKS key entry password (= KSPASS in su3.vars; the password prompted by SU3File bulksign)")
 	// builddir must match the flag registered by buildCmd so that the sign
 	// command operates on the same output directory where feeds were written.
 	signCmd.Flags().String("builddir", "build", "Build directory containing .atom.xml feeds to sign")
@@ -128,9 +129,14 @@ func loadPrivateKey(path string) (crypto.Signer, error) {
 // loadKey loads a private key from path.  If the extension matches a known
 // keystore type the key is extracted in memory using LoadKeyFromKeystore;
 // otherwise the file is read as a PEM private key.
-func loadKey(path, password string) (crypto.Signer, error) {
+//
+// For JKS files created by I2P:
+//   storePassword = keystore container password (default "changeit")
+//   entryPassword = private key entry password (= KSPASS in su3.vars)
+//   alias         = signer e-mail address (= SIGNER in su3.vars)
+func loadKey(path, storePassword, entryPassword, alias string) (crypto.Signer, error) {
 	if keystoreExts[strings.ToLower(filepath.Ext(path))] {
-		return signer.LoadKeyFromKeystore(path, password)
+		return signer.LoadKeyFromKeystore(path, storePassword, entryPassword, alias)
 	}
 	return loadPrivateKey(path)
 }
@@ -140,7 +146,7 @@ func loadKey(path, password string) (crypto.Signer, error) {
 // during key loading or su3 creation. Supports RSA (PKCS#1 and PKCS#8),
 // ECDSA (P-256, P-384, P-521), Ed25519, Java KeyStore, and PKCS#12.
 func Sign(xmlfeed string) error {
-	sk, err := loadKey(c.SigningKey, c.KeystorePass)
+	sk, err := loadKey(c.SigningKey, c.KeystorePass, c.KeyEntryPass, c.SignerId)
 	if err != nil {
 		return err
 	}
