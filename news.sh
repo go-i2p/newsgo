@@ -36,49 +36,9 @@ set -e
 NEWSGO="${NEWSGO:-newsgo}"
 BUILDDIR="${BUILDDIR:-./build}"
 DATADIR="${DATADIR:-./data}"
-# Password for Java / PKCS#12 keystores.  Leave empty for unprotected keys.
+# Keystore password — passed to newsgo via --keystorepass.
+# Leave empty for PEM keys or unprotected keystores.
 KSPASS="${KSPASS:-}"
-
-# maybe_convert_keystore — if KS points to a JKS, BKS, PKCS#12, or PFX file,
-# convert it to a PEM private key at etc/signing-key.pem and update KS.
-# Requires: keytool (JDK) for JKS/BKS input; openssl for PKCS#12/PFX input.
-maybe_convert_keystore() {
-    # Already a PEM or explicitly not a known keystore extension — nothing to do.
-    case "$KS" in
-        *.ks|*.jks|*.bks|*.BKS)
-            _pem_out="./etc/signing-key.pem"
-            _tmp_p12="./etc/_tmp_signing.p12"
-            echo "Converting Java keystore $KS -> $_pem_out ..."
-            keytool -importkeystore \
-                -srckeystore  "$KS" \
-                -destkeystore "$_tmp_p12" \
-                -deststoretype PKCS12 \
-                -srcstorepass  "$KSPASS" \
-                -deststorepass "$KSPASS" \
-                -noprompt
-            openssl pkcs12 \
-                -in      "$_tmp_p12" \
-                -nocerts -nodes \
-                -out     "$_pem_out" \
-                -passin  "pass:$KSPASS"
-            rm -f "$_tmp_p12"
-            chmod 600 "$_pem_out"
-            KS="$_pem_out"
-            ;;
-        *.p12|*.pfx|*.P12|*.PFX)
-            _pem_out="./etc/signing-key.pem"
-            echo "Converting PKCS#12 keystore $KS -> $_pem_out ..."
-            openssl pkcs12 \
-                -in      "$KS" \
-                -nocerts -nodes \
-                -out     "$_pem_out" \
-                -passin  "pass:$KSPASS"
-            chmod 600 "$_pem_out"
-            KS="$_pem_out"
-            ;;
-    esac
-}
-maybe_convert_keystore
 
 final_generate_signed_feeds() {
     echo "Building Atom XML newsfeeds..."
@@ -90,9 +50,10 @@ final_generate_signed_feeds() {
 
     echo "Signing newsfeeds..."
     "$NEWSGO" sign \
-        --builddir   "$BUILDDIR" \
-        --signingkey "$KS" \
-        --signerid   "$SIGNER"
+        --builddir    "$BUILDDIR" \
+        --signingkey  "$KS" \
+        --signerid    "$SIGNER" \
+        --keystorepass "$KSPASS"
 
     echo
     ls -l "$BUILDDIR"

@@ -46,6 +46,10 @@ type Conf struct {
 	TranslationsDir string `mapstructure:"translationsdir"`
 	SignerId        string `mapstructure:"signerid"`
 	SigningKey      string `mapstructure:"signingkey"`
+	// KeystorePass is the password used to open a Java KeyStore or PKCS#12
+	// file passed via --signingkey.  Leave empty for PEM keys or unprotected
+	// keystores.
+	KeystorePass string `mapstructure:"keystorepass"`
 
 	// Fetch subcommand options.
 

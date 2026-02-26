@@ -15,6 +15,13 @@ import (
 	"github.com/spf13/viper"
 )
 
+// keystoreExts lists file extensions that indicate a Java KeyStore or PKCS#12
+// container rather than a plain PEM file.
+var keystoreExts = map[string]bool{
+	".ks": true, ".jks": true, ".bks": true,
+	".p12": true, ".pfx": true,
+}
+
 // signCmd represents the sign command
 var signCmd = &cobra.Command{
 	Use:   "sign",
@@ -69,7 +76,8 @@ func init() {
 	// Here you will define your flags and configuration settings.
 
 	signCmd.Flags().String("signerid", "null@example.i2p", "ID to use when signing the news")
-	signCmd.Flags().String("signingkey", "signing_key.pem", "Path to a signing key")
+	signCmd.Flags().String("signingkey", "signing_key.pem", "Path to a PEM private key, Java KeyStore (.ks/.jks), or PKCS#12 (.p12/.pfx) file")
+	signCmd.Flags().String("keystorepass", "", "Password for a Java KeyStore or PKCS#12 file (leave empty for PEM keys or unprotected keystores)")
 	// builddir must match the flag registered by buildCmd so that the sign
 	// command operates on the same output directory where feeds were written.
 	signCmd.Flags().String("builddir", "build", "Build directory containing .atom.xml feeds to sign")
@@ -117,12 +125,22 @@ func loadPrivateKey(path string) (crypto.Signer, error) {
 	return key, nil
 }
 
+// loadKey loads a private key from path.  If the extension matches a known
+// keystore type the key is extracted in memory using LoadKeyFromKeystore;
+// otherwise the file is read as a PEM private key.
+func loadKey(path, password string) (crypto.Signer, error) {
+	if keystoreExts[strings.ToLower(filepath.Ext(path))] {
+		return signer.LoadKeyFromKeystore(path, password)
+	}
+	return loadPrivateKey(path)
+}
+
 // Sign loads the configured private key and signs the Atom XML feed at
 // xmlfeed, producing a co-located .su3 file. It returns any error encountered
 // during key loading or su3 creation. Supports RSA (PKCS#1 and PKCS#8),
-// ECDSA (P-256, P-384, P-521), and Ed25519 signing keys.
+// ECDSA (P-256, P-384, P-521), Ed25519, Java KeyStore, and PKCS#12.
 func Sign(xmlfeed string) error {
-	sk, err := loadPrivateKey(c.SigningKey)
+	sk, err := loadKey(c.SigningKey, c.KeystorePass)
 	if err != nil {
 		return err
 	}

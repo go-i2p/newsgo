@@ -8,9 +8,10 @@
 #                        sign all Atom XML newsfeeds.
 #
 # KS in etc/su3.vars (or etc/su3.vars.custom) may point to a PEM key or to a
-# Java keystore (.ks/.jks), PKCS#12 (.p12/.pfx), or BKS file.  news.sh detects
-# the format automatically and converts it to etc/signing-key.pem before
-# signing.  Set KSPASS to the keystore password if one is required.
+# Java keystore (.ks/.jks) or PKCS#12 (.p12/.pfx) file.  newsgo detects the
+# format by magic bytes, extracts the key entirely in memory, and signs without
+# writing anything to disk.  Set KSPASS to the keystore password if required.
+# No JDK or openssl installation is needed.
 
 # ── Stage 1: build newsgo binary ──────────────────────────────────────────────
 FROM golang:latest AS builder
@@ -31,10 +32,7 @@ ENV LC_ALL=en_US.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        locales \
-        default-jdk-headless \
-        openssl && \
+    apt-get install -y --no-install-recommends locales && \
     sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
     locale-gen && \
     rm -rf /var/lib/apt/lists/*
