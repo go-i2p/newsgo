@@ -17,7 +17,7 @@ require (
 	i2pgit.org/go-i2p/reseed-tools v0.3.11
 )
 
-replace i2pgit.org/go-i2p/reseed-tools => ../reseed-tools
+//replace i2pgit.org/go-i2p/reseed-tools => ../reseed-tools
 
 require (
 	github.com/cretz/bine v0.2.0 // indirect

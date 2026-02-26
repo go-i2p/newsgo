@@ -166,3 +166,5 @@ gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15/go.mod h1:Co6ibVJAznAaIkqp8
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+i2pgit.org/go-i2p/reseed-tools v0.3.11 h1:+ouHWJsepX1//gTKaI5qKTv9eVJVVZabYAjDtoKoW7g=
+i2pgit.org/go-i2p/reseed-tools v0.3.11/go.mod h1:6itDT7z5kW3xIvCLgXDCHnXO53OlyHmjFeY8K7eqKow=
