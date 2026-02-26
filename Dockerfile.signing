@@ -3,29 +3,14 @@
 #
 # Two-stage build:
 #   Stage 1 (builder)  — compiles the newsgo binary from source using the
-#                        official Go image.  No Python, no virtualenv, no JDK.
+#                        official Go image.  No Python, no virtualenv.
 #   Stage 2 (runtime)  — minimal Debian image that runs news.sh to build and
 #                        sign all Atom XML newsfeeds.
 #
-# Operator migration notes
-# ─────────────────────────
-# 1. Copy data/ and etc/ from your i2p.newsxml checkout before building:
-#      cp -r i2p.newsxml/data .
-#      cp -r i2p.newsxml/etc  .
-#
-# 2. The KS variable must point to a PEM private key (NOT a Java keystore).
-#    Update etc/su3.vars or etc/su3.vars.custom to reflect the new path, e.g.:
-#      KS=/.i2p-plugin-keys/news-signing-key.pem
-#    Generate a 4096-bit RSA PEM key:
-#      openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
-#          -out ~/.i2p-plugin-keys/news-signing-key.pem
-#
-#    The etc/su3.vars.custom.docker file is automatically promoted to
-#    etc/su3.vars.custom inside the image (same as i2p.newsxml), so place
-#    your Docker-specific KS override there.
-#
-# 3. The mount for $HOME/i2p/ (I2P install dir) is no longer required.
-#    See docker-news.sh for the updated docker run invocation.
+# KS in etc/su3.vars (or etc/su3.vars.custom) may point to a PEM key or to a
+# Java keystore (.ks/.jks), PKCS#12 (.p12/.pfx), or BKS file.  news.sh detects
+# the format automatically and converts it to etc/signing-key.pem before
+# signing.  Set KSPASS to the keystore password if one is required.
 
 # ── Stage 1: build newsgo binary ──────────────────────────────────────────────
 FROM golang:latest AS builder
@@ -46,7 +31,10 @@ ENV LC_ALL=en_US.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends locales && \
+    apt-get install -y --no-install-recommends \
+        locales \
+        default-jdk-headless \
+        openssl && \
     sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
     locale-gen && \
     rm -rf /var/lib/apt/lists/*
@@ -62,7 +50,8 @@ COPY --from=builder /newsgo /usr/local/bin/newsgo
 COPY . /opt/newsgo
 
 # Promote the Docker-specific custom vars (identical to i2p.newsxml behaviour).
-# This file should set KS to the PEM key path inside /.i2p-plugin-keys/.
+# Set KS here to the path of your key or keystore inside /.i2p-plugin-keys/.
+# news.sh will convert JKS/BKS/PKCS12 formats to PEM automatically.
 COPY etc/su3.vars.custom.docker /opt/newsgo/etc/su3.vars.custom
 
 # Allow the arbitrary UID passed via `docker run -u $(id -u):$(id -g)` to

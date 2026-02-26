@@ -5,3 +5,16 @@
 /build
 /data
 *keys
+
+# Keystores and private keys — never commit
+*.ks
+*.jks
+*.bks
+*.BKS
+*.p12
+*.pfx
+*.P12
+*.PFX
+*.keystore
+*.pem
+*.pem
