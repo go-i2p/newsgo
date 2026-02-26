@@ -1,0 +1,78 @@
+# Dockerfile.signing — newsgo-native signing container
+# Drop-in replacement for i2p.newsxml/Dockerfile.signing
+#
+# Two-stage build:
+#   Stage 1 (builder)  — compiles the newsgo binary from source using the
+#                        official Go image.  No Python, no virtualenv, no JDK.
+#   Stage 2 (runtime)  — minimal Debian image that runs news.sh to build and
+#                        sign all Atom XML newsfeeds.
+#
+# Operator migration notes
+# ─────────────────────────
+# 1. Copy data/ and etc/ from your i2p.newsxml checkout before building:
+#      cp -r i2p.newsxml/data .
+#      cp -r i2p.newsxml/etc  .
+#
+# 2. The KS variable must point to a PEM private key (NOT a Java keystore).
+#    Update etc/su3.vars or etc/su3.vars.custom to reflect the new path, e.g.:
+#      KS=/.i2p-plugin-keys/news-signing-key.pem
+#    Generate a 4096-bit RSA PEM key:
+#      openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+#          -out ~/.i2p-plugin-keys/news-signing-key.pem
+#
+#    The etc/su3.vars.custom.docker file is automatically promoted to
+#    etc/su3.vars.custom inside the image (same as i2p.newsxml), so place
+#    your Docker-specific KS override there.
+#
+# 3. The mount for $HOME/i2p/ (I2P install dir) is no longer required.
+#    See docker-news.sh for the updated docker run invocation.
+
+# ── Stage 1: build newsgo binary ──────────────────────────────────────────────
+FROM golang:latest AS builder
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /newsgo .
+
+# ── Stage 2: signing runtime ───────────────────────────────────────────────────
+FROM debian:stable-slim
+
+ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends locales && \
+    sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install the newsgo binary built in stage 1.
+COPY --from=builder /newsgo /usr/local/bin/newsgo
+
+# Copy the project tree (data/, etc/, news.sh, …).
+# The operator must have run:
+#   cp -r i2p.newsxml/data .
+#   cp -r i2p.newsxml/etc  .
+# before invoking docker build.
+COPY . /opt/newsgo
+
+# Promote the Docker-specific custom vars (identical to i2p.newsxml behaviour).
+# This file should set KS to the PEM key path inside /.i2p-plugin-keys/.
+COPY etc/su3.vars.custom.docker /opt/newsgo/etc/su3.vars.custom
+
+# Allow the arbitrary UID passed via `docker run -u $(id -u):$(id -g)` to
+# write the build output into /opt/newsgo/build/.
+RUN mkdir -p /opt/newsgo/build /.i2p-plugin-keys && \
+    chown -R 1000:1000 /opt/newsgo /.i2p-plugin-keys && \
+    chmod -R o+rwX     /opt/newsgo /.i2p-plugin-keys
+
+WORKDIR /opt/newsgo
+
+# news.sh sources etc/su3.vars (and etc/su3.vars.custom if present), builds all
+# Atom XML feeds with `newsgo build`, then signs them with `newsgo sign`.
+CMD ["/bin/sh", "news.sh"]
