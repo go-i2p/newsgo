@@ -12,8 +12,8 @@ github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxv
 github.com/go-i2p/i2pkeys v0.0.0-20241108200332-e4f5ccdff8c4/go.mod h1:m5TlHjPZrU5KbTd7Lr+I2rljyC6aJ88HdkeMQXV0U0E=
 github.com/go-i2p/i2pkeys v0.33.92 h1:e2vx3vf7tNesaJ8HmAlGPOcfiGM86jzeIGxh27I9J2Y=
 github.com/go-i2p/i2pkeys v0.33.92/go.mod h1:BRURQ/twxV0WKjZlFSKki93ivBi+MirZPWudfwTzMpE=
-github.com/go-i2p/logger v0.1.59999 h1:q09lHiTkKiObe76lN8ES3CdNHmlzAMBv5/p0kkTt8GU=
-github.com/go-i2p/logger v0.1.59999/go.mod h1:WbyfWMndgFGJZ4xIA4oXlIfwgr3iQF/cb0HqMn/YZxk=
+github.com/go-i2p/logger v0.1.60000-0.20260701134448-2648c3b0e040 h1:+a8ZBh5vNWbQE4+bSSVGtDTTMVfKV/rLVyYAaGUp8ME=
+github.com/go-i2p/logger v0.1.60000-0.20260701134448-2648c3b0e040/go.mod h1:hImCA+uIhYMZ9A6zyBezgdWJ9L5Nx+eEYCO74epGzts=
 github.com/go-i2p/onramp v0.33.92 h1:Dk3A0SGpdEw829rSjW2LqN8o16pUvuhiN0vn36z7Gpc=
 github.com/go-i2p/onramp v0.33.92/go.mod h1:5sfB8H2xk05gAS2K7XAUZ7ekOfwGJu3tWF0fqdXzJG4=
 github.com/go-i2p/sam3 v0.33.92 h1:TVpi4GH7Yc7nZBiE1QxLjcZfnC4fI/80zxQz1Rk36BA=
@@ -167,7 +167,7 @@ golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d/go.mod h1:aiJjzUbINMkxb
 golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
-i2pgit.org/go-i2p/reseed-tools v0.3.13 h1:Ai90cYvmNZcxpMEl13HqqYZxcalepDa6QTX4c/vKdNU=
-i2pgit.org/go-i2p/reseed-tools v0.3.13/go.mod h1:LMYst6SXLCRalqs6BstNYynXS/MukYgqbbUOhgHtCMo=
+i2pgit.org/go-i2p/reseed-tools v0.3.12 h1:0/2weKaBsIMIrr0y3sjwbVGTA9je3PwGwqOAdeNd8U8=
+i2pgit.org/go-i2p/reseed-tools v0.3.12/go.mod h1:PaMSKOwf7fhUJRApoidGJcDwzXv+v5uEQ4WloCP/IAw=
 software.sslmate.com/src/go-pkcs12 v0.7.3 h1:JBQD3FDqYjTeyDAeZQklj2ar88ykBLtALloPJHyAauU=
 software.sslmate.com/src/go-pkcs12 v0.7.3/go.mod h1:Qiz0EyvDRJjjxGyUQa2cCNZn/wMyzrRJ/qcDXOQazLI=

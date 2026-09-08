@@ -17,7 +17,7 @@ require (
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.59.0
 	golang.org/x/text v0.42.0
-	i2pgit.org/go-i2p/reseed-tools v0.3.13
+	i2pgit.org/go-i2p/reseed-tools v0.3.12
 	software.sslmate.com/src/go-pkcs12 v0.7.3
 )
 
@@ -27,7 +27,7 @@ require (
 	github.com/cretz/bine v0.2.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-i2p/i2pkeys v0.33.92 // indirect
-	github.com/go-i2p/logger v0.1.59999 // indirect
+	github.com/go-i2p/logger v0.1.60000-0.20260701134448-2648c3b0e040 // indirect
 	github.com/go-i2p/sam3 v0.33.92 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
